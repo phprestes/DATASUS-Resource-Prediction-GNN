@@ -745,3 +745,64 @@ contrato: código novo que toque a tabela de tarefa não pode materializar
 `co_unidade` como string, nem copiar o frame inteiro. `TabelaTarefa.codigos()` e
 `Previsao.mascara_de_entidades()` existem para tornar o caminho certo o mais
 curto.
+
+---
+
+## D-24 — Primeiro resultado: as baselines no recorte estadual
+
+**Data:** 2026-07-25 · **Status:** medido
+
+Trilha 1 completa, conjunto de teste (transição 2025), 11.671.480 exemplos,
+4.994 positivos, prevalência 0,0428%.
+
+| Modelo | AP | AUC-ROC | MAP@10 |
+|---|---|---|---|
+| `gbdt_geral` | **0,00248** | **0,741** | 0,253 |
+| `gbdt_ultimo_snapshot` | 0,00228 | 0,721 | 0,230 |
+| `popularidade_item` | 0,00181 | 0,730 | **0,296** |
+| `persistencia` | 0,000428 | 0,500 | 0,028 |
+
+### A régua funciona
+
+`persistencia` devolve AP exatamente igual à prevalência (0,000428) e AUC
+exatamente 0,500. Não é coincidência, é o que a construção exige, e serve de
+verificação de que o arcabouço de avaliação está correto. Se algum dia esse
+número divergir da prevalência, há erro no código, não no modelo.
+
+### As duas métricas discordam, e isso é informação
+
+`gbdt_geral` vence em AP e AUC; `popularidade_item` vence em MAP@10 por margem
+larga (0,296 contra 0,253). Um modelo pode ordenar melhor **globalmente** e pior
+**dentro de cada estabelecimento**.
+
+Isso valida D-19 na prática, e não mais por argumento: a métrica de destaque
+tinha de ser o MAP@k, porque o uso pretendido é ranquear equipamentos dentro de
+um estabelecimento, não comparar pares de estabelecimentos diferentes entre si.
+Um relatório que trouxesse apenas AP concluiria que o GBDT é o melhor modelo da
+trilha 1, o que é falso para o uso que se pretende dar a ele.
+
+### A série histórica acrescenta, e agora está medido
+
+`gbdt_geral` supera `gbdt_ultimo_snapshot` nas três métricas. Responde
+empiricamente a pergunta que o cronograma original fazia e que nunca havia sido
+respondida: treinar sobre a série inteira é melhor que treinar apenas sobre a
+transição mais recente. A diferença é modesta mas consistente em AP, AUC e MAP.
+
+### A barra para as GNNs
+
+Qualquer trilha estrutural precisa superar **MAP@10 = 0,296**, que é o que um
+modelo obtém sabendo apenas quais tipos de equipamento são comumente adquiridos —
+sem olhar para o estabelecimento, para a rede ou para a geografia. Essa é a barra
+concreta, e ela não é trivial.
+
+Se as GNNs não a superarem, a conclusão honesta é que a estrutura do CNES não
+acrescenta poder preditivo para esta tarefa. É um resultado negativo publicável,
+e o desenho experimental foi montado para que ele possa ser afirmado com
+segurança em vez de confundido com falha de implementação.
+
+### Nota sobre `por_entidade`
+
+A quinta baseline não entrou nesta execução. Com 136 mil estabelecimentos e um
+mínimo de 30 exemplos de treino por entidade, poucos qualificam, e o custo de
+ajustar milhares de modelos separados não se justificava antes de haver as GNNs
+para comparar. Fica para a execução completa da trilha 1.
