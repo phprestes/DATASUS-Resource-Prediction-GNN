@@ -2,7 +2,8 @@ import pandas as pd
 import pyarrow.dataset as ds
 import pyarrow.compute as pc
 from relbench.base import Database, Table, Dataset
-from src.constant import PRIMARY_FOLDER, CNES_PKEY, CNES_FKEY
+from src.paths import PRIMARY_FOLDER
+from src.schema import CNES_PKEY, CNES_FKEY
 
 class CNESDataset(Dataset):
     name = "cnes-dataset"

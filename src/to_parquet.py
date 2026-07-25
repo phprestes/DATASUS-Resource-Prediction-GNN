@@ -5,7 +5,8 @@ import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
 
-from src.constant import INTERMEDIATE_FOLDER, PRIMARY_FOLDER, CNES_USEFUL_COLUMNS, CNES_DTYPES
+from src.paths import INTERMEDIATE_FOLDER, PRIMARY_FOLDER
+from src.schema import CNES_DTYPES, CNES_EXTRACT_COLUMNS
 
 INPUT_PREFIX = 'sql_cnes_'
 
@@ -37,7 +38,7 @@ def clean_cnes_data(
                 else:
                     base_table = table
                     
-                if base_table not in CNES_USEFUL_COLUMNS:
+                if base_table not in CNES_EXTRACT_COLUMNS:
                     continue
                 
                 parquet_path = period_folder / f"{base_table}.parquet"
@@ -45,7 +46,7 @@ def clean_cnes_data(
                 if parquet_path.exists() and not reprocess:
                     continue
                 
-                cols = CNES_USEFUL_COLUMNS[base_table]
+                cols = CNES_EXTRACT_COLUMNS[base_table]
                 dtypes = CNES_DTYPES.get(base_table, {})
                 
                 try:
