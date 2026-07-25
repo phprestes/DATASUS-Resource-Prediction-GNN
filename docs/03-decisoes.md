@@ -234,14 +234,7 @@ eventos de aquisição e taxa de mudança entre snapshots. Candidatas:
 Fecha também: reaplicação do filtro de D-06 sobre os nove snapshots, unicidade
 das chaves naturais declaradas, e viabilidade da trilha geográfica.
 
-**Alerta preliminar sobre a trilha geográfica.** Medido na camada primária de
-201701: dos 19.607 estabelecimentos de São Paulo, **apenas 0,5% têm
-`nu_latitude` preenchida**. Se a cobertura não melhorar substancialmente nos
-snapshots recentes, a trilha 3 como especificada não é viável, e as opções são
-três — restringir ao subconjunto posicionável declarando o viés de seleção,
-geocodificar `co_cep` por fonte externa, ou trocar proximidade física por
-proximidade administrativa via `co_regiao_saude`. A escolha depende da medição
-completa e será registrada como decisão própria.
+O item da trilha geográfica já foi medido e fechado em D-15.
 
 ---
 
@@ -330,3 +323,61 @@ falha que D-05 elimina.
 **Como não regride.** A validação de `src/schema.py` recusa qualquer
 `fkey_para` que não nomeie uma tabela com escopo `incluida`, e falha no import
 em vez de seguir com o grafo incompleto.
+
+---
+
+## D-15 — Coordenada é tratada como invariante no tempo, com o custo declarado
+
+**Data:** 2026-07-25 · **Status:** aceita
+
+**Contexto.** A trilha geográfica depende inteiramente de `nu_latitude` e
+`nu_longitude`, cujo preenchimento nunca havia sido verificado.
+
+**Medição.** Estabelecimentos de São Paulo (`co_municipio_gestor = 355030`) com
+coordenada plausível, por snapshot:
+
+| Snapshot | Estabelecimentos | Com coordenada | Cobertura |
+|---|---|---|---|
+| 201701 | 19.607 | 89 | **0,45%** |
+| 201801 | 20.885 | 218 | 1,04% |
+| 201901 | 22.289 | 850 | 3,81% |
+| 202001 | 23.771 | 8.032 | **33,79%** |
+| 202101 | 25.096 | 12.814 | 51,06% |
+| 202201 | 26.790 | 15.412 | **57,53%** |
+
+Há um degrau claro em 2020 — coerente com o CNES ter passado a exigir
+geolocalização no cadastro. "Plausível" exclui coordenada zerada e coordenada
+fora da caixa que contém o Brasil.
+
+**O problema.** A partição de treino cobre as transições 2018 a 2022 (D-04, seção
+6.1 da metodologia). Nas duas primeiras, a cobertura é de 1% e 4%: praticamente
+não há nó posicionável, então a trilha geográfica não teria grafo para treinar
+justamente na maior parte da janela de treino.
+
+**Decisão.** A posição geográfica é tratada como **atributo invariante no
+tempo**: um estabelecimento é posicionado pela coordenada do snapshot mais
+antigo em que ela existe, e essa posição vale para todos os períodos.
+
+**O custo, declarado.** Isso é uma forma limitada de olhar adiante: posicionar
+em 2018 um estabelecimento cuja coordenada só apareceu em 2021 usa informação
+que não estava disponível em 2018. Duas razões para aceitar, e uma para
+mitigar:
+
+1. O que se usa é a *localização física*, que muda muito pouco — o registro
+   apareceu depois, mas o prédio já estava lá. Não é informação sobre o
+   desfecho.
+2. A alternativa é restringir a série a 2020 em diante, o que deixa três
+   transições e inviabiliza a partição.
+3. **Mitigação:** toma-se a observação mais **antiga** disponível, não a mais
+   recente, o que minimiza a distância entre o dado usado e o período modelado.
+
+**Alternativas descartadas.** Geocodificar `co_cep` por fonte externa
+acrescentaria dependência de dado de terceiro e um erro de posição não medido.
+Substituir proximidade física por `co_regiao_saude` mudaria a hipótese da trilha
+de vizinhança física para vizinhança administrativa, o que é outra pesquisa.
+
+**Obrigação de reporte.** Toda métrica da trilha geográfica traz o número de
+estabelecimentos posicionáveis ao lado, e a comparação com as trilhas 1 e 2
+precisa ser feita **sobre o mesmo subconjunto de nós** — comparar uma GNN
+geográfica restrita aos posicionáveis com um baseline rodado em todos os
+estabelecimentos não mede estrutura, mede diferença de amostra.

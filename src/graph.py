@@ -255,19 +255,37 @@ class GrafoGeografico:
 
 
 def coordenadas_por_unidade(
-    db: Database, periodo_referencia: str | None = None
+    db: Database,
+    periodo_referencia: str | None = None,
+    politica: str = "mais_antiga",
 ) -> pd.DataFrame:
     """
-    Extrai uma coordenada por estabelecimento a partir da tabela raiz.
+    Extrai uma coordenada por estabelecimento, tratada como invariante no tempo.
 
-    Um estabelecimento aparece em vários snapshots e pode ter tido a coordenada
-    corrigida entre eles. Toma-se a observação **mais recente e válida**, porque
-    correção de cadastro é mais provável que mudança física de endereço.
+    A posição é invariante por decisão, não por descuido: a cobertura de
+    `nu_latitude` em São Paulo vai de 0,45% em 2017 a 57,5% em 2022, então
+    exigir a coordenada do próprio período deixaria a janela de treino sem nós
+    posicionáveis. Ver D-15, que registra a medição e o custo dessa escolha.
 
-    Linhas sem coordenada utilizável são descartadas, e a contagem de descarte é
-    responsabilidade do chamador — a viabilidade da trilha geográfica depende
-    dessa taxa, que o notebook 00 mede.
+    `politica='mais_antiga'` é o default e toma a primeira observação válida da
+    série. É deliberadamente diferente de tomar a mais recente: as duas usam
+    informação posterior ao período modelado, mas a mais antiga minimiza a
+    distância entre o dado usado e o período em questão. `'mais_recente'`
+    existe para quem quiser a coordenada mais provavelmente correta, aceitando
+    olhar mais adiante.
+
+    `periodo_referencia` corta a série antes de escolher, o que permite montar o
+    grafo sem enxergar nada além de uma data — útil para verificar quanto o
+    resultado depende da suposição de invariância.
+
+    Linhas sem coordenada utilizável são descartadas. Contar o descarte é
+    responsabilidade do chamador, e reportá-lo ao lado da métrica é obrigação
+    de D-15.
     """
+    if politica not in ("mais_antiga", "mais_recente"):
+        raise ValueError(
+            f"politica deve ser 'mais_antiga' ou 'mais_recente'; recebido {politica!r}"
+        )
     raiz = db.table_dict[TABELA_RAIZ].df
     colunas = [COL_ENTIDADE, COL_LATITUDE, COL_LONGITUDE, COL_TEMPO]
     faltando = [c for c in colunas if c not in raiz.column_names]
@@ -287,13 +305,9 @@ def coordenadas_por_unidade(
     # Brasil inteiro cabe nesta caixa; fora dela é erro de digitação.
     df = df[df[COL_LATITUDE].between(-34.0, 6.0) & df[COL_LONGITUDE].between(-74.0, -34.0)]
 
-    return (
-        df.sort_values(COL_TEMPO)
-        .groupby(COL_ENTIDADE, as_index=False)
-        .last()
-        .drop(columns=[COL_TEMPO])
-        .reset_index(drop=True)
-    )
+    agrupado = df.sort_values(COL_TEMPO).groupby(COL_ENTIDADE, as_index=False)
+    escolhido = agrupado.first() if politica == "mais_antiga" else agrupado.last()
+    return escolhido.drop(columns=[COL_TEMPO]).reset_index(drop=True)
 
 
 def montar_grafo_geografico(
@@ -301,6 +315,7 @@ def montar_grafo_geografico(
     k: int = 10,
     raio_km: float | None = None,
     periodo_referencia: str | None = None,
+    politica_coordenada: str = "mais_antiga",
 ) -> GrafoGeografico:
     """
     Liga cada estabelecimento aos `k` mais próximos, opcionalmente cortando por raio.
@@ -315,7 +330,7 @@ def montar_grafo_geografico(
     """
     from sklearn.neighbors import BallTree
 
-    coords = coordenadas_por_unidade(db, periodo_referencia)
+    coords = coordenadas_por_unidade(db, periodo_referencia, politica_coordenada)
     if len(coords) < 2:
         raise ErroGrafo(
             f"apenas {len(coords)} estabelecimentos com coordenada válida; "
