@@ -69,6 +69,12 @@ class Tabela:
     escopo: str = "incluida"
     motivo_escopo: str = ""
     pkey: str | None = None
+    # Conjunto de colunas que identifica uma linha, quando conhecido. Distinto
+    # de pkey: pkey é a chave da entidade que o RelBench usa para ligar tabelas
+    # (co_unidade), e quase nunca é única — rlEstabEquipamento tem uma linha por
+    # equipamento, não por estabelecimento. src/changes.py precisa da chave da
+    # linha para distinguir modificação de remoção seguida de inserção.
+    chave_natural: tuple[str, ...] = ()
     colunas: list[Coluna] = field(default_factory=list)
     linha_doc: int = 0
 
@@ -151,6 +157,10 @@ def _parse(texto: str, origem: str) -> tuple[list[Tabela], dict[str, str]]:
                 atual.nome_dicionario = _limpar(valor.split("—")[0])
             elif rotulo.startswith("chave prim"):
                 atual.pkey = _limpar(valor) or None
+            elif rotulo.startswith("chave natural"):
+                atual.chave_natural = tuple(
+                    p for p in (_limpar(x) for x in valor.split(",")) if p
+                )
             continue
 
         if not linha.startswith("|"):
@@ -241,6 +251,14 @@ def _validar(tabelas: list[Tabela], origem: str) -> None:
                 "não está entre as colunas declaradas"
             )
 
+        materializadas = {c.nome for c in t.colunas if c.materializar}
+        faltando = [c for c in t.chave_natural if c not in materializadas]
+        if faltando:
+            raise ErroSchema(
+                f"{origem}:{t.linha_doc}: chave natural de {t.nome!r} cita "
+                f"{faltando}, que não são colunas materializadas da tabela"
+            )
+
         if not t.por_classificacao("util", "pendente"):
             raise ErroSchema(
                 f"{origem}:{t.linha_doc}: tabela {t.nome!r} tem escopo 'incluida' "
@@ -294,6 +312,10 @@ CNES_DTYPES: dict[str, dict[str, str]] = {
 }
 
 CNES_PKEY: dict[str, str] = {t.nome: t.pkey for t in _INCLUIDAS if t.pkey}
+
+CNES_NATURAL_KEY: dict[str, tuple[str, ...]] = {
+    t.nome: t.chave_natural for t in _INCLUIDAS if t.chave_natural
+}
 
 CNES_FKEY: dict[str, dict[str, str]] = {
     t.nome: {c.nome: c.fkey_para for c in t.colunas if c.fkey_para and c.materializar}

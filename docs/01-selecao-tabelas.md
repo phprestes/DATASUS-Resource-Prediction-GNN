@@ -66,6 +66,25 @@ deformações são recorrentes:
   `src/to_parquet.py`. `datetime64[ns]` dispara `try_strptime` com máscara
   `%d/%m/%Y` e anula datas anteriores a 1900-01-01, sentinela do CNES.
 - **pkey** / **fkey_para** — o grafo relacional entregue ao RelBench.
+
+### Chave primária e chave natural
+
+São coisas diferentes e as duas aparecem nos metadados de cada tabela.
+
+**Chave primária** é a chave da *entidade*, usada pelo RelBench para ligar
+tabelas — quase sempre `co_unidade`. Ela **não é única**: `rlEstabEquipamento`
+tem uma linha por equipamento de cada estabelecimento, não uma por
+estabelecimento.
+
+**Chave natural** é o conjunto de colunas que identifica uma *linha*, e é o que
+`src/changes.py` precisa para distinguir uma modificação de uma remoção seguida
+de inserção ao comparar dois snapshots. É opcional: quando não declarada, o
+diff opera por presença da tupla inteira e não classifica modificações — o que
+infla a taxa de mudança, porque cada alteração conta como dois eventos.
+
+As chaves naturais hoje declaradas são **hipóteses derivadas do dicionário**,
+ainda não verificadas contra os dados. Confirmar sua unicidade é item do
+`notebook/00_analise_alvo.ipynb`.
 - **nulos** — percentual de nulos medido, por snapshot, na ordem
   201701 e 202501. `n/m` = não medida.
 
@@ -334,6 +353,7 @@ deformações são recorrentes:
 - **Dicionário:** `RL_ESTAB_COMPLEMENTAR` — Leitos Hospitalares
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_leito`, `co_tipo_leito`
 - **Linhas medidas:** 201701: 53.489, 202501: 59.848
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -400,6 +420,7 @@ deformações são recorrentes:
 - **Dicionário:** `RL_ESTAB_EQUIPAMENTO` — Equipamentos
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_equipamento`, `co_tipo_equipamento`, `tp_sus`
 - **Linhas medidas:** 201701: 747.500, 202501: 1.247.979
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
