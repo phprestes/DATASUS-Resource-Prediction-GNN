@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meu-projeto-ic"
+version = "0.2.0"
+description = "Identificação de escassez de recursos em redes de saúde a partir de microdados do CNES, com aprendizado profundo relacional e geográfico"
+requires-python = "==3.12.*"
+
+dependencies = [
+    # ETL
+    "requests==2.33.1",
+    "tqdm==4.67.3",
+    "duckdb==1.5.2",
+    "pandas==3.0.2",
+    "pyarrow==23.0.1",
+    # Modelagem
+    "relbench==2.1.1",
+    "torch==2.9.1",
+    "torch-geometric==2.7.0",
+    "scikit-learn==1.6.1",
+    # Análise e notebooks
+    "networkx==3.6.1",
+    "matplotlib==3.10.8",
+    "seaborn==0.13.2",
+    "ipykernel==7.2.0",
+]
+
+[project.optional-dependencies]
+# Extensões compiladas do PyG. Não vêm do PyPI: exigem o índice de wheels casado
+# com a versão do torch. Ver requirements.txt para o índice correto.
+pyg-ext = [
+    "pyg-lib==0.6.0+pt29cpu",
+    "torch-scatter==2.1.2+pt29cpu",
+    "torch-sparse==0.6.18+pt29cpu",
+]
+dev = [
+    "pytest==9.0.2",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

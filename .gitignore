@@ -1,0 +1,22 @@
+# Ambiente
+.venv
+.vscode
+*.egg-info
+__pycache__
+.pytest_cache
+
+# Dados. Nenhuma camada de data/ é versionada: 01_raw vem do CNES e as demais
+# são reprodutíveis a partir dela rodando o ETL (ver CLAUDE.md).
+data/01_raw/*
+data/02_intermediate/*
+data/03_primary/*
+data/04_feature/*
+data/temp_extract/
+!data/*/.gitkeep
+
+# Cache do relbench
+cache/
+notebook/cache/
+
+# Notebooks
+.ipynb_checkpoints

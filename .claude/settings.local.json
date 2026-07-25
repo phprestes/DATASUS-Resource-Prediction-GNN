@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(VIRTUAL_ENV=.venv uv pip freeze)"
+    ]
+  }
+}
