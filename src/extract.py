@@ -7,14 +7,24 @@ from src.paths import RAW_FOLDER
 
 BASE_URL = "https://cnes.datasus.gov.br/EstatisticasServlet?path=BASE_DE_DADOS_CNES_"
 
+# Amostra temporal canônica do projeto: janeiro de cada ano, 2017 a 2025.
+# Nove snapshots, oito transições. Ver docs/03-decisoes.md, D-04 — o projeto
+# original previa cinco snapshots bienais, que produzem apenas quatro
+# transições e não sustentam afirmação sobre dinâmica temporal.
+PERIODOS_ANUAIS: List[str] = [f"{ano}01" for ano in range(2017, 2026)]
+
 def download_cnes_zips(
-        periods : List[str], 
+        periods : List[str],
         output_folder : Path = RAW_FOLDER,
-        reprocess : bool = True,
+        reprocess : bool = False,
         block_size : int = 16 * 1024
 ) -> None:
     """
     Baixa arquivos ZIP do CNES para os períodos informados (YYYYMM).
+
+    `reprocess=False` pula o que já existe em disco. É o default porque cada ZIP
+    tem centenas de megabytes e a série inteira são vários gigabytes: rebaixar
+    por acidente é caro. Os três estágios do ETL usam o mesmo default.
     """
     output_folder.mkdir(parents=True, exist_ok=True)
 
@@ -56,4 +66,8 @@ def download_cnes_zips(
                 continue
 
 if __name__ == "__main__":
-    download_cnes_zips(["201701"])
+    import sys
+
+    periodos = sys.argv[1:] or PERIODOS_ANUAIS
+    print(f"Baixando {len(periodos)} competências: {periodos}")
+    download_cnes_zips(periodos)

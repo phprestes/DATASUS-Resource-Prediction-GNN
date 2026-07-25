@@ -15,9 +15,16 @@ def process_cnes_zip(
         periods : List[str],
         input_folder : Path = RAW_FOLDER,
         output_folder : Path = INTERMEDIATE_FOLDER,
-        reprocess : bool = True,
+        reprocess : bool = False,
         only_fact_tables : bool = True
 ) -> None:
+    """
+    Carrega os CSV de cada ZIP de competência num DuckDB por competência.
+
+    Tudo entra como VARCHAR (`all_varchar=True`): a tipagem acontece só na
+    conversão para Parquet, guiada por CNES_DTYPES. `reprocess=False` pula
+    competências já convertidas, mesmo default dos outros estágios do ETL.
+    """
     # Limpa diretório temporário se existir de execuções anteriores falhas
     if TEMP_EXTRACT_DIR.exists():
         shutil.rmtree(TEMP_EXTRACT_DIR)
