@@ -174,8 +174,20 @@ que o projeto original os previa:
 Módulo [`src/graph.py`](../src/graph.py), sobre RelBench. O grafo vem do
 `fkey_col_to_pkey_table` derivado de
 [`01-selecao-tabelas.md`](01-selecao-tabelas.md), com `tbEstabelecimento` como
-tabela raiz. O `time_col` vem dos eventos de `changes.py`, não da coluna
-censurada.
+tabela raiz.
+
+**Eixo temporal.** O `time_col` é a data do snapshot — 1º de janeiro do ano da
+competência — e não `to_chardt_atualizacaoddmmyyyy`. A distinção importa: a data
+do snapshot é conhecida exatamente e vale para toda linha daquele arquivo,
+enquanto a coluna de atualização é censurada à direita (seção 4). Uma linha
+presente no snapshot de 01/2021 significa "este fato valia em 01/2021", que é
+exatamente a semântica que um grafo temporal precisa.
+
+Cada tabela é portanto o empilhamento dos nove snapshots, com o período como
+eixo. O grafo carrega o **estado** da rede em cada instante; os eventos de
+`changes.py` fornecem os **rótulos** e, como variante de ablação, o filtro que
+mantém apenas linhas alteradas. Usar só os eventos para montar o grafo perderia
+o estado, e sem o estado não há vizinhança para a GNN observar.
 
 O filtro por município é empurrado para dentro da leitura: filtra-se a raiz por
 `co_municipio_gestor`, e o conjunto de `co_unidade` resultante vira predicado

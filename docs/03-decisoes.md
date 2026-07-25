@@ -196,13 +196,24 @@ snapshot foi tirado — e não uma história.
 
 **Decisão.** A unidade de análise passa a ser a transição `t → t+1`,
 materializada por [`src/changes.py`](../src/changes.py) como evento de mudança.
-O `time_col` do grafo vem desses eventos.
+
+O eixo temporal do grafo é a **data do snapshot** (1º de janeiro da
+competência), não a coluna de atualização e não a data do evento. Os eventos de
+mudança fornecem os rótulos e o filtro opcional de linhas alteradas.
+
+**Por que separar as duas coisas.** A primeira redação desta decisão dizia que o
+`time_col` do grafo viria dos eventos, o que estava errado: um grafo montado só
+com eventos carrega as mudanças e perde o estado da rede, e sem estado não há
+vizinhança para a GNN observar. O grafo precisa responder "como era a rede em
+01/2021", e a resposta é o snapshot inteiro daquela data. A data do snapshot
+também é preferível por ser conhecida exatamente e uniforme para todas as
+linhas do arquivo, ao contrário da coluna de atualização, que é censurada.
 
 **Consequência.** Fica explícito que mudanças intermediárias entre snapshots são
 irrecuperáveis, e que a resolução temporal do estudo é o espaçamento entre
 snapshots, não a granularidade diária da coluna. Implementa também o filtro
-"somente linhas que sofreram alteração" do projeto original, agora como
-consequência da definição e não como efeito colateral.
+"somente linhas que sofreram alteração" do projeto original, agora como variante
+declarada de ablação, e não como efeito colateral.
 
 **Nota histórica.** Existiu um `src/check_changes.py` no projeto, hoje apagado —
 o rastro sobrevivia em `meu_projeto_ic.egg-info/SOURCES.txt`. `changes.py`
