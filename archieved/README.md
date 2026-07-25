@@ -14,6 +14,6 @@ O que ainda tem valor aqui é a **intenção**, não a implementação:
   `LFCES018`, …) anotadas linha por linha. Foi insumo da seleção de tabelas que
   hoje vive em [`docs/01-selecao-tabelas.md`](../docs/01-selecao-tabelas.md).
 - `relbench_cnes.py` mostra a primeira tentativa de montar o grafo e a tarefa.
-- `analise_cnes.ipynb` e `relbench_cnes_.ipynb` são as explorações iniciais.
+- `analise_cnes.ipynb` e `relbench_cnes.ipynb` são as explorações iniciais.
 
 Ver [`docs/03-decisoes.md`](../docs/03-decisoes.md), D-12.
