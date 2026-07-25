@@ -88,8 +88,24 @@ All tracks consume the same `TabelaTarefa` and the same `ParticaoTemporal`, and 
 
 Track 1 must stay free of relational and spatial features. Adding neighbourhood aggregates to the baselines would erase the difference the experiment exists to measure.
 
-## Pending work
+## Numbers you should know before proposing anything
 
-`notebook/00_analise_alvo.ipynb` is the blocking empirical gate (D-09, D-10): it must confirm the target choice, verify the declared natural keys are actually unique, re-run the empirical column filter over all nine snapshots, and check `nu_latitude`/`nu_longitude` coverage before the geographic track can be trusted. Notebooks `01`–`03` still need rewriting against the new modules.
+Measured on the nine annual snapshots, São Paulo. These constrain what is worth trying.
+
+- **Target.** `rlEstabEquipamento` yields 12,081 acquisition events across the eight transitions; `rlEstabComplementar` (beds) yields 688. That is why the target moved (D-01, D-18).
+- **Prevalence is 0.065%** — one positive per 1,530 candidates, 18.5M examples for 12k events. Two candidate-space restrictions were tested and rejected (D-19). Don't propose a third without measuring first. **MAP@k is the headline metric**; absolute AP is not interpretable at this baseline.
+- **Change rate is flat**: 0.082–0.112 per year, median 0.094, no pandemic spike. Annual density is settled (D-10).
+- **Coordinates cap at 57.3%**, structurally — the union of all snapshots adds nothing over the best single one. 43% of establishments are never nodes in track 3, so comparisons involving it must run on the matched subset (D-15, D-17).
+- **The schema drifts.** Three of 44 tables have columns that vanish and return, with 201901 the anomalous competência. Reading several Parquet files directly via DuckDB needs `union_by_name=true` (D-20).
+
+## Notebooks
+
+`00_analise_alvo` is the empirical gate — executed, all five verdicts closed, results recorded in D-18 to D-20. `01_perfil_dados` regenerates the profiling report from the primary layer. `02_relacoes` draws the schema graph from `schema.py` instead of a hand-written edge list. `03_modelagem` runs all three tracks against one partition. `04_recorte_e_dados_externos` measures the two things D-16 left conditional.
+
+## External data
+
+[docs/04-dados-externos.md](docs/04-dados-externos.md) sets a six-item admission test. The binding rule: **no external source enters as a label** — the task is measured inside CNES, and that is what keeps the three tracks comparable. Ranked by value over risk, widening the spatial scope beyond one município comes *before* any external source: it is cheaper, the data is already downloaded, and it introduces no new error (D-16).
+
+## Also
 
 `archieved/` uses the old RelBench API (`relbench.data`, `NodeTask`, `RelBenchEncoder`), absent from 2.1.1. Historical reference only — do not copy code from it (D-12).
