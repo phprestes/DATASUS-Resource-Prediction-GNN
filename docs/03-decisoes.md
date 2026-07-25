@@ -231,9 +231,17 @@ eventos de aquisição e taxa de mudança entre snapshots. Candidatas:
 `rlEstabEquipamento`, `rlEstabComplementar`, `rlEstabServClass`,
 `rlEstabInstFisiAssist`.
 
-Fecha também: reaplicação do filtro de D-06 sobre os nove snapshots, e
-viabilidade da trilha geográfica — preenchimento e sanidade de `nu_latitude` e
-`nu_longitude` em São Paulo, nunca verificados.
+Fecha também: reaplicação do filtro de D-06 sobre os nove snapshots, unicidade
+das chaves naturais declaradas, e viabilidade da trilha geográfica.
+
+**Alerta preliminar sobre a trilha geográfica.** Medido na camada primária de
+201701: dos 19.607 estabelecimentos de São Paulo, **apenas 0,5% têm
+`nu_latitude` preenchida**. Se a cobertura não melhorar substancialmente nos
+snapshots recentes, a trilha 3 como especificada não é viável, e as opções são
+três — restringir ao subconjunto posicionável declarando o viés de seleção,
+geocodificar `co_cep` por fonte externa, ou trocar proximidade física por
+proximidade administrativa via `co_regiao_saude`. A escolha depende da medição
+completa e será registrada como decisão própria.
 
 ---
 
