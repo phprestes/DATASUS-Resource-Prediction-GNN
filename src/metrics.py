@@ -18,11 +18,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (
-    average_precision_score,
-    mean_absolute_error,
-    roc_auc_score,
-)
+from scipy.stats import rankdata
+from sklearn.metrics import average_precision_score, mean_absolute_error
 
 
 def average_precision(y: np.ndarray, escore: np.ndarray) -> float:
@@ -39,10 +36,30 @@ def average_precision(y: np.ndarray, escore: np.ndarray) -> float:
 
 
 def auc_roc(y: np.ndarray, escore: np.ndarray) -> float:
+    """
+    AUC-ROC pela estatística de postos de Mann-Whitney.
+
+    Matematicamente idêntica ao `roc_auc_score` do sklearn, incluindo o
+    tratamento de empates por posto médio, mas sem o caminho de
+    `label_binarize`, que constrói uma matriz esparsa e a densifica para
+    (n, 2) `int64`. Com 11,7 milhões de exemplos de teste isso são centenas de
+    megabytes alocados para calcular um único número, e foi o que estourou a
+    memória no recorte estadual.
+
+    A identidade usada: a AUC é a probabilidade de um positivo sorteado ao acaso
+    receber escore maior que um negativo sorteado ao acaso, que é exatamente a
+    soma dos postos dos positivos, descontada a soma mínima possível, dividida
+    pelo número de pares.
+    """
     y = np.asarray(y)
-    if y.sum() == 0 or y.sum() == len(y):
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+    if n_pos == 0 or n_neg == 0:
         return float("nan")
-    return float(roc_auc_score(y, escore))
+
+    postos = rankdata(escore)
+    soma_positivos = float(postos[y == 1].sum())
+    return (soma_positivos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
 
 
 def map_at_k(
@@ -67,33 +84,45 @@ def map_at_k(
     tabela como se fosse capacidade preditiva. Com desempate aleatório, escore
     constante recebe o MAP de um ranking ao azar, que é o que ele merece.
     """
-    ruido = np.random.default_rng(semente).random(len(escore))
-    df = pd.DataFrame(
-        {
-            "entidade": entidades,
-            "y": np.asarray(y),
-            "escore": escore,
-            "desempate": ruido,
-        }
-    ).sort_values(["escore", "desempate"], ascending=False)
+    y = np.asarray(y, dtype=np.int8)
+    # Códigos inteiros: agrupar por string de 13 caracteres em dezenas de milhões
+    # de linhas custa memória e tempo desnecessários. `int32` cobre bem mais
+    # entidades do que existem no país e custa metade do `int64` que o
+    # `factorize` devolve.
+    codigos = np.asarray(pd.factorize(entidades, sort=False)[0], dtype=np.int32)
+    ruido = np.random.default_rng(semente).random(len(y)).astype(np.float32)
+    # Negar o escore em float32 evita a cópia em float64 que `-escore` faria
+    # sobre um vetor já em precisão dupla.
+    escore_invertido = np.negative(escore, dtype=np.float32)
+
+    # Uma única ordenação lexicográfica em vez de um DataFrame intermediário:
+    # entidade crescente, escore decrescente, empate desfeito ao azar. Com 11
+    # milhões de linhas, montar o DataFrame de quatro colunas e ordená-lo
+    # custava mais de um gigabyte de pico.
+    ordem = np.lexsort((ruido, escore_invertido, codigos))
+    del ruido, escore_invertido
+
+    chaves = codigos[ordem]
+    acertos_ordenados = y[ordem]
+    del ordem, codigos
+
+    cortes = np.flatnonzero(np.diff(chaves)) + 1
+    del chaves
     precisoes: list[float] = []
 
-    for _, grupo in df.groupby("entidade", sort=False):
-        if grupo["y"].sum() == 0:
+    for bloco in np.split(acertos_ordenados, cortes):
+        positivos = int(bloco.sum())
+        if positivos == 0:
             continue
-        # O DataFrame já vem ordenado por (escore, desempate), então head(k) é o
-        # topo-k com empates desfeitos ao azar.
-        acertos = grupo.head(k)["y"].to_numpy()
-        if acertos.sum() == 0:
+        topo = bloco[:k]
+        if topo.sum() == 0:
             precisoes.append(0.0)
             continue
-        posicoes = np.arange(1, len(acertos) + 1)
-        precisao_em_i = np.cumsum(acertos) / posicoes
+        precisao_em_i = np.cumsum(topo) / np.arange(1, len(topo) + 1)
         # Divide pelo mínimo entre k e o total de positivos da entidade: é o
         # máximo de acertos alcançável no topo-k, então a métrica chega a 1,0
         # quando o ranking é perfeito, mesmo que haja mais positivos que k.
-        divisor = min(k, int(grupo["y"].sum()))
-        precisoes.append(float((precisao_em_i * acertos).sum() / divisor))
+        precisoes.append(float((precisao_em_i * topo).sum() / min(k, positivos)))
 
     return float(np.mean(precisoes)) if precisoes else float("nan")
 

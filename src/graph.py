@@ -40,8 +40,16 @@ COL_ENTIDADE = "co_unidade"
 COL_MUNICIPIO = "co_municipio_gestor"
 COL_TEMPO = "timestamp"
 
-# Município de São Paulo. Recorte espacial da amostra, ver docs/02-metodologia.md.
+# Recortes espaciais. O código do IBGE é hierárquico: os dois primeiros dígitos
+# são a UF, os demais o município. Um recorte é portanto um prefixo, e o
+# município é só o caso em que o prefixo tem o código inteiro.
 MUNICIPIO_SAO_PAULO = "355030"
+ESTADO_SAO_PAULO = "35"
+
+# Recorte padrão do projeto. Passou de município para estado em D-21: o estado dá
+# 2,9 vezes mais eventos de aquisição, 645 municípios em vez de um — o que
+# habilita a população do IBGE — e cobertura de coordenada de 85,7% contra 75%.
+RECORTE_PADRAO = ESTADO_SAO_PAULO
 
 COL_LATITUDE = "nu_latitude"
 COL_LONGITUDE = "nu_longitude"
@@ -51,6 +59,45 @@ RAIO_TERRA_KM = 6371.0
 
 class ErroGrafo(RuntimeError):
     """Grafo impossível de montar a partir da camada primária."""
+
+
+def filtro_recorte_sql(recorte: str | None, coluna: str = COL_MUNICIPIO) -> str:
+    """
+    Cláusula SQL do recorte espacial, para uso em DuckDB.
+
+    O código de município do IBGE é hierárquico, então um prefixo é um recorte:
+    `'35'` é o estado de São Paulo, `'355030'` é o município da capital, `None` é
+    o país. Não há caso especial — o município é apenas o prefixo completo.
+
+    Devolve `'1 = 1'` para recorte nulo, para que a cláusula possa ser
+    interpolada sem ramificar no chamador.
+    """
+    if recorte is None:
+        return "1 = 1"
+    if not recorte.isdigit():
+        raise ValueError(
+            f"recorte deve ser um prefixo numérico de código IBGE; recebido {recorte!r}"
+        )
+    return f"\"{coluna}\" LIKE '{recorte}%'"
+
+
+def filtro_recorte_arrow(recorte: str | None):
+    """
+    Mesma semântica de `filtro_recorte_sql`, como expressão pyarrow.
+
+    Existe separada porque o filtro da tabela raiz é empurrado para dentro do
+    scan Parquet, e ali a linguagem é a de expressões do pyarrow, não SQL.
+    """
+    if recorte is None:
+        return None
+    if not recorte.isdigit():
+        raise ValueError(
+            f"recorte deve ser um prefixo numérico de código IBGE; recebido {recorte!r}"
+        )
+    campo = pc.field(COL_MUNICIPIO)
+    if len(recorte) >= 6:
+        return pc.equal(campo, recorte)
+    return pc.starts_with(campo, recorte)
 
 
 def data_do_periodo(periodo: str) -> pd.Timestamp:
@@ -115,17 +162,17 @@ def _empilhar(
 
 
 def montar_db(
-    municipio_id: str | None = MUNICIPIO_SAO_PAULO,
+    recorte: str | None = RECORTE_PADRAO,
     pasta: Path = PRIMARY_FOLDER,
     tolerar_falhas: bool = False,
 ) -> Database:
     """
     Monta o `Database` do RelBench empilhando os snapshots da camada primária.
 
-    `municipio_id` é o principal controle de custo: filtra a tabela raiz por
-    `co_municipio_gestor` e empurra o conjunto de `co_unidade` resultante como
-    predicado no scan de cada tabela filha. Com `None`, monta o grafo nacional —
-    o que exige memória de sobra.
+    `recorte` é o principal controle de custo: um prefixo de código IBGE — `'35'`
+    para o estado de São Paulo, `'355030'` para a capital, `None` para o país.
+    Filtra a tabela raiz e empurra o conjunto de `co_unidade` resultante como
+    predicado no scan de cada tabela filha.
 
     `tolerar_falhas=True` registra e segue adiante quando uma tabela filha não
     pode ser lida. O default é falhar: uma tabela que desaparece em silêncio do
@@ -140,14 +187,15 @@ def montar_db(
         )
 
     raiz = _empilhar(TABELA_RAIZ, arquivos_raiz, None)
-    if municipio_id is not None:
-        raiz = raiz.filter(pc.equal(pc.field(COL_MUNICIPIO), str(municipio_id)))
+    filtro = filtro_recorte_arrow(recorte)
+    if filtro is not None:
+        raiz = raiz.filter(filtro)
         if raiz.num_rows == 0:
             raise ErroGrafo(
-                f"nenhum estabelecimento com {COL_MUNICIPIO} = {municipio_id!r}. "
-                f"Confira o código do município."
+                f"nenhum estabelecimento com {COL_MUNICIPIO} começando em "
+                f"{recorte!r}. Confira o prefixo do código IBGE."
             )
-    unidades = set(raiz.column(COL_ENTIDADE).to_pylist()) if municipio_id else None
+    unidades = set(raiz.column(COL_ENTIDADE).to_pylist()) if recorte else None
 
     # Primeiro passo: materializa os dados de cada tabela. As chaves
     # estrangeiras só podem ser resolvidas depois que se sabe quais tabelas de
@@ -194,25 +242,25 @@ def montar_db(
 
 class CNESDataset(Dataset):
     """
-    Dataset RelBench do CNES, ancorado num município.
+    Dataset RelBench do CNES, ancorado num recorte territorial.
 
-    O recorte espacial é atributo da instância e não parâmetro de `make_db`,
-    porque o RelBench chama `make_db` sem argumentos ao materializar o cache —
-    a versão anterior expunha `make_db(municipio_id=...)`, que o framework
-    nunca chamava com o argumento, então o grafo cacheado saía nacional.
+    O recorte é atributo da instância e não parâmetro de `make_db`, porque o
+    RelBench chama `make_db` sem argumentos ao materializar o cache — a versão
+    anterior expunha `make_db(municipio_id=...)`, que o framework nunca chamava
+    com o argumento, então o grafo cacheado saía nacional.
     """
 
     name = "cnes-dataset"
 
     def __init__(
         self,
-        municipio_id: str | None = MUNICIPIO_SAO_PAULO,
+        recorte: str | None = RECORTE_PADRAO,
         val_timestamp: pd.Timestamp | None = None,
         test_timestamp: pd.Timestamp | None = None,
         pasta: Path = PRIMARY_FOLDER,
         **kwargs,
     ) -> None:
-        self.municipio_id = municipio_id
+        self.recorte = recorte
         self.pasta = pasta
         # Coerentes com a partição de src/splits.py sobre os nove snapshots
         # anuais: validação começa na transição 202301, teste na 202501.
@@ -221,7 +269,7 @@ class CNESDataset(Dataset):
         super().__init__(**kwargs)
 
     def make_db(self) -> Database:
-        return montar_db(self.municipio_id, self.pasta)
+        return montar_db(self.recorte, self.pasta)
 
 
 # ---------------------------------------------------------------------------

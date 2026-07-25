@@ -457,7 +457,10 @@ ruído, e integrar sem tratá-lo pioraria o trabalho em vez de deixá-lo neutro.
 
 ## D-17 — O teto de cobertura das coordenadas é estrutural, não temporal
 
-**Data:** 2026-07-25 · **Status:** aceita · **Corrige uma expectativa de D-15**
+**Data:** 2026-07-25 · **Status:** SUPERADA POR D-22 — os números abaixo
+foram medidos sobre seis das nove competências e subestimam a cobertura.
+A conclusão qualitativa (a união acrescenta pouco sobre o melhor snapshot)
+permanece; o nível não. · **Corrige uma expectativa de D-15**
 
 **Contexto.** D-15 decidiu tratar a coordenada como invariante no tempo,
 posicionando cada estabelecimento pela observação mais antiga disponível. A
@@ -622,3 +625,123 @@ ser tolerante a isso:
 **Descartado.** Remover as colunas instáveis da seleção. Elas são válidas em oito
 dos nove snapshots, e descartá-las por causa de uma competência anômala custaria
 mais informação do que o problema que resolve.
+
+---
+
+## D-21 — Recorte passa do município de São Paulo para o estado
+
+**Data:** 2026-07-25 · **Status:** aceita · **Executa a prioridade 1 de D-16**
+
+**Contexto.** D-16 colocou a expansão do recorte como a primeira coisa a fazer,
+antes de qualquer fonte externa: é mais barata, o dado já está baixado e não
+introduz erro novo.
+
+**Medido**, comparando o município com o estado sobre as nove competências:
+
+| | Município | Estado | Ganho |
+|---|---|---|---|
+| Estabelecimentos (202501) | 38.688 | 136.561 | 3,5x |
+| Municípios distintos | 1 | **645** | habilita o IBGE |
+| Aquisições nas 8 transições | 12.081 | **34.571** | 2,9x |
+| Candidatos | 18,5 M | 73,4 M | 4,0x |
+| Prevalência | 0,065% | 0,047% | pior |
+| Cobertura de coordenada | 75,0% | **85,7%** | melhor |
+
+**Decisão.** `RECORTE_PADRAO` passa a ser `'35'`. O recorte deixa de ser um
+código de município e vira um **prefixo de código IBGE**, que é hierárquico:
+`'35'` é o estado, `'355030'` a capital, `None` o país. Não há caso especial —
+município é apenas o prefixo completo.
+
+**O que se ganha.** Quase três vezes mais eventos, que era o principal risco
+técnico do projeto (D-19). E 645 municípios em vez de um: a população municipal
+do IBGE deixa de ser uma constante de variância zero e passa a ser um atributo
+utilizável, o que desbloqueia o item 2 de D-16 sem nenhuma mediação geográfica.
+
+**O que se perde.** A prevalência piora de 0,065% para 0,047%, porque o estado
+tem proporcionalmente mais estabelecimentos pequenos, que raramente adquirem
+equipamento. O ganho absoluto em positivos compensa com folga.
+
+---
+
+## D-22 — Correção de D-17: o teto das coordenadas é 85,7%, não 57%
+
+**Data:** 2026-07-25 · **Status:** aceita · **Corrige D-17**
+
+D-17 afirmou que a cobertura de coordenada tinha teto estrutural de 57,3% e que
+43% dos estabelecimentos jamais seriam nós da trilha geográfica. **O número
+estava errado.** A medição rodou quando só seis das nove competências tinham
+sido convertidas, e as três que faltavam são justamente as de melhor cobertura.
+
+Cobertura de coordenada plausível, série completa:
+
+| Snapshot | Município | Estado |
+|---|---|---|
+| 201701 | 0,5% | 1,1% |
+| 201901 | 3,8% | 26,4% |
+| 202001 | 33,8% | 71,7% |
+| 202201 | 57,6% | 79,9% |
+| 202501 | **74,7%** | **85,7%** |
+
+União das nove competências: **75,0%** no município e **85,7%** no estado.
+
+**O que muda.** A trilha geográfica é bem mais viável do que D-17 concluiu — no
+recorte estadual ela cobre 6 de cada 7 estabelecimentos, não 4 de cada 7. A
+obrigação de comparação pareada continua valendo, mas o subconjunto excluído é
+menor e a perda de poder estatístico é bem menor.
+
+**O que continua valendo de D-17.** A união acrescenta pouco sobre o melhor
+snapshot isolado (85,7% contra 85,7% no estado), então a política de D-15 de
+tratar a posição como invariante segue justificada pelo motivo certo: ela dá nós
+à janela de treino de 2018 e 2019, onde a cobertura própria é de 1% a 26%.
+Continuam valendo também a rejeição do CEP-5 como substituto e o aperto do filtro
+de plausibilidade.
+
+**Lição de método, registrada de propósito.** A medição foi feita sobre dados
+parciais sem que a parcialidade fosse checada, e virou uma decisão. O
+`notebook/00_analise_alvo.ipynb` afirma o número de snapshots disponíveis logo na
+primeira célula justamente para que isso não se repita.
+
+---
+
+## D-23 — Otimização de memória: a máquina tem 9 GB, não infinitos
+
+**Data:** 2026-07-25 · **Status:** aceita
+
+**Contexto.** Montar a tarefa no recorte estadual derrubou a IDE do
+pesquisador por consumo de RAM. A máquina tem 9 GB no total, com cerca de 3 GB
+livres em uso normal.
+
+**Onde a memória ia, e o que foi feito.**
+
+| Causa | Antes | Depois |
+|---|---|---|
+| Tabela de tarefa com colunas `object` | 3,22 GB | **0,317 GB** |
+| Pico ao montar a tabela | 4,87 GB | **3,37 GB** |
+| `_codificar` fazia `.astype(str)` do frame inteiro | cópia integral em strings | códigos categóricos em `float32` |
+| `Previsao.entidades` guardava strings | ~1 GB no teste do estado | `int32` mais índice |
+| `map_at_k` montava DataFrame de 4 colunas e ordenava | >1 GB de pico | `np.lexsort` sobre códigos |
+| `por_entidade` varria o vetor inteiro por entidade | O(136k × 37M) | índice invertido em uma passada |
+
+As mudanças estruturais:
+
+1. **Categórico compartilhado, definido antes do laço.** Sem um índice comum, o
+   `concat` cairia de volta para `object` e o pico seria o da tabela inteira em
+   strings.
+2. **Arrow com dicionário em vez de `.df()`.** `fetch_arrow_table` mais `cast`
+   para `dictionary(int32, string)` produz `category` sem nunca materializar o
+   vetor de objetos Python.
+3. **`timestamp` deixa de ser coluna** e vira propriedade derivada de
+   `periodo_destino`. Oito bytes por linha para guardar o que já estava
+   determinado.
+4. **Teto explícito de memória no DuckDB.** Sem ele, o DuckDB dimensiona o buffer
+   pela RAM total e disputa memória com o pandas no mesmo processo; com teto, ele
+   derrama para disco, que é lento mas termina.
+
+**Efeito colateral bem-vindo.** A montagem também ficou quase duas vezes mais
+rápida — 66s para 35s. Menos alocação é menos trabalho.
+
+**Consequência de projeto.** A restrição de memória passa a ser parte do
+contrato: código novo que toque a tabela de tarefa não pode materializar
+`co_unidade` como string, nem copiar o frame inteiro. `TabelaTarefa.codigos()` e
+`Previsao.mascara_de_entidades()` existem para tornar o caminho certo o mais
+curto.

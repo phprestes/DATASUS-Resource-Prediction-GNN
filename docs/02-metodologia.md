@@ -85,10 +85,14 @@ abrangência. Fora do escopo desta iteração; anotado como extensão possível.
 
 ## 3. Amostra
 
-- **Recorte espacial:** estabelecimentos do município de São Paulo,
-  `co_municipio_gestor = "355030"`. Mantém o recorte definido no projeto
-  original e é o que torna o experimento executável em máquina local: o filtro
-  é empurrado para dentro da leitura Parquet, e não apenas aplicado depois.
+- **Recorte espacial:** estabelecimentos do **estado de São Paulo**, prefixo
+  `35` de `co_municipio_gestor`, 645 municípios e cerca de 136 mil
+  estabelecimentos. O projeto original recortava só a capital; a expansão está
+  em D-21 e foi feita porque quase triplica os eventos de aquisição (12.081 para
+  34.571) e porque um único município deixa a população do IBGE com variância
+  zero, inutilizável como atributo. O recorte é um **prefixo de código IBGE**,
+  então `'355030'` recupera a capital e `None` dá o país. O filtro é empurrado
+  para dentro da leitura Parquet, não aplicado depois.
 - **Recorte temporal:** snapshots anuais de janeiro, 01/2017 a 01/2025, nove
   pontos. O projeto original previa cinco snapshots bienais; a densidade foi
   dobrada porque cinco pontos com dois anos de intervalo não sustentam nenhuma

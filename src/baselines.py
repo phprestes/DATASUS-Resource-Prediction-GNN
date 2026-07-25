@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
-from sklearn.preprocessing import OrdinalEncoder
 
 from src.splits import ErroParticao, ParticaoTemporal
 from src.tasks import COL_CONJUNTO, COL_ROTULO, TabelaTarefa
@@ -44,14 +43,63 @@ class ErroBaseline(RuntimeError):
 
 @dataclass
 class Previsao:
-    """Escores de um modelo sobre um conjunto, com a proveniência anexada."""
+    """
+    Escores de um modelo sobre um conjunto, com a proveniência anexada.
+
+    `entidades` guarda **códigos inteiros**, não os identificadores originais.
+    Com dezenas de milhões de linhas, um vetor de `co_unidade` como objetos
+    Python custa quase um gigabyte; como `int32`, custa quarenta vezes menos.
+    `rotulos_entidade` é o índice que traduz código para `co_unidade` quando
+    isso for necessário — use `nomes_das_entidades()`.
+    """
 
     modelo: str
     conjunto: str
     escore: np.ndarray
     y: np.ndarray
     entidades: np.ndarray
+    rotulos_entidade: np.ndarray | None = None
     metadados: dict = field(default_factory=dict)
+
+    def nomes_das_entidades(self) -> np.ndarray:
+        """
+        Traduz os códigos de volta para `co_unidade`.
+
+        Materializa o vetor de strings, então só chame quando de fato precisar
+        dos identificadores — para inspecionar resultados, não para calcular
+        métricas.
+        """
+        if self.rotulos_entidade is None:
+            return self.entidades
+        return np.asarray(self.rotulos_entidade)[self.entidades]
+
+    def mascara_de_entidades(self, aceitos: "set | list | np.ndarray") -> np.ndarray:
+        """
+        Máscara booleana das linhas cujas entidades estão no conjunto dado.
+
+        Existe para a comparação pareada entre trilhas exigida por D-15: ela
+        precisa restringir todas as trilhas ao mesmo subconjunto de nós, e
+        fazê-lo sem reconstruir o vetor de strings.
+        """
+        if self.rotulos_entidade is None:
+            return np.isin(self.entidades, list(aceitos))
+        codigos_aceitos = np.flatnonzero(
+            np.isin(np.asarray(self.rotulos_entidade), list(aceitos))
+        )
+        return np.isin(self.entidades, codigos_aceitos)
+
+
+def _entidades_de(tarefa: TabelaTarefa, mascara) -> tuple[np.ndarray, np.ndarray | None]:
+    """
+    Códigos de entidade de um recorte, com o índice para traduzi-los de volta.
+
+    Mantém a codificação categórica da tabela em vez de materializar strings.
+    """
+    serie = tarefa.df.loc[mascara, tarefa.col_entidade]
+    if isinstance(serie.dtype, pd.CategoricalDtype):
+        return serie.cat.codes.to_numpy(), np.asarray(serie.cat.categories)
+    codigos, rotulos = pd.factorize(serie, sort=False)
+    return codigos, np.asarray(rotulos)
 
 
 def _validar_particao(tarefa: TabelaTarefa, particao: ParticaoTemporal) -> None:
@@ -94,13 +142,15 @@ def persistencia(tarefa: TabelaTarefa, conjunto: str = "teste") -> Previsao:
     a régua que diz quanto do resultado de qualquer outro modelo é informação e
     quanto é o desbalanceamento da classe.
     """
-    df = tarefa.por_conjunto(conjunto)
+    mascara = tarefa.df[COL_CONJUNTO] == conjunto
+    codigos, rotulos = _entidades_de(tarefa, mascara)
     return Previsao(
         modelo="persistencia",
         conjunto=conjunto,
-        escore=np.zeros(len(df)),
-        y=df[COL_ROTULO].to_numpy(),
-        entidades=df[tarefa.col_entidade].to_numpy(),
+        escore=np.zeros(int(mascara.sum()), dtype=np.float32),
+        y=tarefa.df.loc[mascara, COL_ROTULO].to_numpy(),
+        entidades=codigos,
+        rotulos_entidade=rotulos,
         metadados={"observacao": "prevê zero por construção; AP = prevalência"},
     )
 
@@ -131,13 +181,16 @@ def popularidade_item(
     )
     base = float((treino[COL_ROTULO].sum() + 1) / (len(treino) + 2))
 
-    df = tarefa.por_conjunto(conjunto)
+    mascara = tarefa.df[COL_CONJUNTO] == conjunto
+    codigos, rotulos = _entidades_de(tarefa, mascara)
+    itens = tarefa.df.loc[mascara, tarefa.col_item]
     return Previsao(
         modelo="popularidade_item",
         conjunto=conjunto,
-        escore=df[tarefa.col_item].map(taxa).fillna(base).to_numpy(),
-        y=df[COL_ROTULO].to_numpy(),
-        entidades=df[tarefa.col_entidade].to_numpy(),
+        escore=itens.map(taxa).fillna(base).to_numpy(dtype=np.float32),
+        y=tarefa.df.loc[mascara, COL_ROTULO].to_numpy(),
+        entidades=codigos,
+        rotulos_entidade=rotulos,
         metadados={"itens_estimados": int(len(taxa)), "taxa_base": base},
     )
 
@@ -182,20 +235,41 @@ def _codificar(
     treino: pd.DataFrame, avaliar: pd.DataFrame
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Codifica categóricas ajustando o encoder **apenas no treino**.
+    Codifica categóricas ajustando as categorias **apenas no treino**.
 
     Categoria inédita na avaliação vira -1 em vez de erro: um estabelecimento ou
     equipamento que só aparece no futuro é situação legítima, e abortar por causa
     dela seria pior que tratá-la como desconhecida.
+
+    A implementação evita deliberadamente `OrdinalEncoder` sobre
+    `.astype(str)`. Aquela combinação reconstruía o frame inteiro como objetos
+    Python antes de codificar, o que em dezenas de milhões de linhas custa
+    gigabytes de pico e foi o que estourou a memória. Aqui as categorias do
+    treino viram um índice, e a avaliação é mapeada contra ele coluna a coluna,
+    em `float32` — metade da memória do `float64` que o sklearn usaria.
     """
-    codificador = OrdinalEncoder(
-        handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=-2
-    )
     colunas = list(treino.columns)
-    return (
-        codificador.fit_transform(treino[colunas].astype(str)),
-        codificador.transform(avaliar[colunas].astype(str)),
-    )
+    x_treino = np.empty((len(treino), len(colunas)), dtype=np.float32)
+    x_avaliar = np.empty((len(avaliar), len(colunas)), dtype=np.float32)
+
+    for i, coluna in enumerate(colunas):
+        serie_treino = treino[coluna]
+        if pd.api.types.is_numeric_dtype(serie_treino) and not isinstance(
+            serie_treino.dtype, pd.CategoricalDtype
+        ):
+            x_treino[:, i] = serie_treino.to_numpy(dtype=np.float32, na_value=-2)
+            x_avaliar[:, i] = avaliar[coluna].to_numpy(dtype=np.float32, na_value=-2)
+            continue
+
+        categorias = pd.Categorical(serie_treino)
+        x_treino[:, i] = categorias.codes
+        # `categories=` reaproveita o índice do treino; valor ausente ou inédito
+        # recebe código -1, que é exatamente a marca de desconhecido que se quer.
+        x_avaliar[:, i] = pd.Categorical(
+            avaliar[coluna], categories=categorias.categories
+        ).codes
+
+    return x_treino, x_avaliar
 
 
 def gbdt(
@@ -243,12 +317,14 @@ def gbdt(
         else modelo.predict_proba(x_avaliar)[:, 1]
     )
 
+    codigos, rotulos = _entidades_de(tarefa, mascara_avaliar)
     return Previsao(
         modelo="gbdt_ultimo_snapshot" if apenas_ultimo_snapshot else "gbdt_geral",
         conjunto=conjunto,
-        escore=escore,
+        escore=escore.astype(np.float32),
         y=y_avaliar,
-        entidades=tarefa.df.loc[mascara_avaliar, tarefa.col_entidade].to_numpy(),
+        entidades=codigos,
+        rotulos_entidade=rotulos,
         metadados={
             "n_treino": int(mascara_treino.sum()),
             "features": list(features.columns),
@@ -281,23 +357,39 @@ def por_entidade(
 
     mascara_treino = (tarefa.df[COL_CONJUNTO] == "treino").to_numpy()
     mascara_avaliar = (tarefa.df[COL_CONJUNTO] == conjunto).to_numpy()
-    entidades = tarefa.df[tarefa.col_entidade].to_numpy()
+    # Códigos inteiros em vez das strings: agrupar por string de 13 caracteres
+    # em dezenas de milhões de linhas é caro em memória e em tempo.
+    entidades = tarefa.codigos(tarefa.col_entidade)
     rotulos = tarefa.df[COL_ROTULO].to_numpy()
 
+    indices_treino = np.flatnonzero(mascara_treino)
     indices_avaliar = np.flatnonzero(mascara_avaliar)
-    proprios = 0
 
-    for entidade in np.unique(entidades[mascara_avaliar]):
-        do_treino = np.flatnonzero(mascara_treino & (entidades == entidade))
-        if len(do_treino) < minimo or len(np.unique(rotulos[do_treino])) < 2:
+    # Índice invertido entidade -> posições, construído em uma passada.
+    # A versão anterior fazia `entidades == entidade` dentro do laço, ou seja uma
+    # varredura do vetor inteiro por entidade: com 136 mil estabelecimentos e
+    # dezenas de milhões de linhas, isso é da ordem de 10^12 comparações.
+    def agrupar(indices: np.ndarray) -> dict[int, np.ndarray]:
+        ordem = indices[np.argsort(entidades[indices], kind="stable")]
+        chaves = entidades[ordem]
+        cortes = np.flatnonzero(np.diff(chaves)) + 1
+        return dict(zip(chaves[np.r_[0, cortes]], np.split(ordem, cortes)))
+
+    treino_por_entidade = agrupar(indices_treino)
+    avaliar_por_entidade = agrupar(indices_avaliar)
+
+    proprios = 0
+    for entidade, alvo in avaliar_por_entidade.items():
+        do_treino = treino_por_entidade.get(entidade)
+        if do_treino is None or len(do_treino) < minimo:
+            continue
+        y_entidade = rotulos[do_treino]
+        if y_entidade.min() == y_entidade.max():
             continue
 
-        alvo = np.flatnonzero(mascara_avaliar & (entidades == entidade))
-        x_treino, x_alvo = _codificar(
-            features.iloc[do_treino], features.iloc[alvo]
-        )
+        x_treino, x_alvo = _codificar(features.iloc[do_treino], features.iloc[alvo])
         modelo = HistGradientBoostingClassifier(random_state=SEMENTE)
-        modelo.fit(x_treino, rotulos[do_treino])
+        modelo.fit(x_treino, y_entidade)
 
         posicoes = np.searchsorted(indices_avaliar, alvo)
         escore[posicoes] = modelo.predict_proba(x_alvo)[:, 1]
@@ -309,9 +401,10 @@ def por_entidade(
         escore=escore,
         y=geral.y,
         entidades=geral.entidades,
+        rotulos_entidade=geral.rotulos_entidade,
         metadados={
             "entidades_com_modelo_proprio": proprios,
-            "entidades_avaliadas": int(len(np.unique(entidades[mascara_avaliar]))),
+            "entidades_avaliadas": len(avaliar_por_entidade),
             "minimo_exemplos": minimo,
         },
     )
