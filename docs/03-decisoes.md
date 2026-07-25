@@ -381,3 +381,93 @@ estabelecimentos posicionáveis ao lado, e a comparação com as trilhas 1 e 2
 precisa ser feita **sobre o mesmo subconjunto de nós** — comparar uma GNN
 geográfica restrita aos posicionáveis com um baseline rodado em todos os
 estabelecimentos não mede estrutura, mede diferença de amostra.
+
+---
+
+## D-16 — Dado externo entra como atributo ou denominador, nunca como rótulo
+
+**Data:** 2026-07-25 · **Status:** aceita
+
+**Contexto.** O CNES não tem coluna de demanda, então a definição operacional de
+escassez é inferida da regularidade da rede. Fontes do SUS e do IBGE poderiam
+fechar essa lacuna, e a pergunta é sob que condições.
+
+**Decisão.** Vale um critério de admissão de seis itens, escrito em
+[`04-dados-externos.md`](04-dados-externos.md): chave determinística,
+alinhamento temporal, papel declarado, ausência de vazamento, viés de cobertura
+mensurável, e custo proporcional ao valor.
+
+O item decisivo é o terceiro. **Nenhuma fonte externa entra como rótulo.** A
+tarefa de aquisição é medida inteiramente dentro do CNES, e é isso que torna as
+trilhas 1, 2 e 3 comparáveis entre si. Trocar o rótulo por um derivado de dado
+externo refaz a comparação inteira, ou seja, é outro trabalho — não uma melhoria
+deste.
+
+**Ordem de prioridade, por valor sobre risco.**
+
+1. **Expandir o recorte de São Paulo para a Região Metropolitana ou o estado.**
+   É mais barato que qualquer fonte externa — o dado já está baixado e o filtro é
+   um parâmetro — e não introduz fonte de erro nova. Ganha variância territorial,
+   e com ela habilita a população municipal do IBGE, que existe anualmente para
+   todos os municípios e não precisa de mediação geográfica.
+2. **População municipal do IBGE**, como denominador e atributo, condicionada ao
+   item 1. Com um único município a população é constante e tem variância zero
+   dentro da amostra — inútil por construção.
+3. **Produção ambulatorial do SIA/SUS**, como atributo defasado. É a candidata
+   de maior valor: procedimentos diagnósticos por imagem correspondem quase
+   um-para-um aos tipos de equipamento. Condicionada a um teste barato — baixar
+   um mês e medir a taxa de pareamento por `co_cnes` e a fração de
+   estabelecimentos observáveis.
+
+**Rejeitadas nesta iteração.** SIH/SUS, porque internação é desfecho a jusante do
+equipamento enquanto procedimento diagnóstico é o uso direto dele, ao mesmo custo
+de parsing. População e renda por setor censitário, porque dependem de um
+mapeamento CEP para setor que o IBGE não publica e de um único censo (2022) para
+cobrir nove anos.
+
+**O risco que o critério existe para barrar.** SIH e SIA registram apenas
+atendimento faturado ao SUS. Estabelecimento privado sem convênio existe no CNES
+e não existe nesses sistemas, então ausência ali não é "sem demanda", é "não
+observável" — e a diferença correlaciona com natureza jurídica, exatamente a
+variável que explica capacidade de investir em equipamento. É confundimento, não
+ruído, e integrar sem tratá-lo pioraria o trabalho em vez de deixá-lo neutro.
+
+---
+
+## D-17 — O teto de cobertura das coordenadas é estrutural, não temporal
+
+**Data:** 2026-07-25 · **Status:** aceita · **Corrige uma expectativa de D-15**
+
+**Contexto.** D-15 decidiu tratar a coordenada como invariante no tempo,
+posicionando cada estabelecimento pela observação mais antiga disponível. A
+premissa implícita era que unir os snapshots elevaria a cobertura.
+
+**Medição.** A união de todos os snapshots disponíveis dá **57,3%** dos 26.790
+estabelecimentos de São Paulo posicionáveis — contra 57,5% no melhor snapshot
+isolado, 202201. A união não acrescenta praticamente nada: quem não tem
+coordenada em 2022 também não tinha nos anos anteriores.
+
+**Consequência.** A decisão de D-15 continua correta pelo motivo certo — ela
+permite que a janela de treino de 2018 e 2019 tenha nós, o que sem ela não
+aconteceria — mas **não eleva o teto**. Cerca de 43% dos estabelecimentos nunca
+serão nós da trilha geográfica, e essa exclusão não é aleatória.
+
+Duas obrigações decorrem, além das já registradas em D-15:
+
+1. Caracterizar quem fica de fora. Se os 43% não posicionáveis diferirem
+   sistematicamente em `tp_unidade`, `tp_gestao` ou porte, a trilha geográfica
+   não fala sobre a rede — fala sobre um recorte enviesado dela.
+2. As coordenadas também são **sujas**: 1,2% das existentes caem fora de uma
+   caixa generosa em torno do município, chegando a 197 km do centro numa cidade
+   de cerca de 35 km de largura. O filtro de plausibilidade de
+   `src/graph.py`, que hoje usa a caixa do Brasil, precisa ser apertado para a
+   caixa da amostra.
+
+**Alternativa avaliada e rebaixada a fallback.** `co_cep` tem 100% de
+preenchimento e agrupá-lo pelos cinco primeiros dígitos produz 2.271 grupos com
+mediana de 4 estabelecimentos — estruturalmente ótimo. Mas validado contra as
+coordenadas limpas, o raio mediano ao centroide do grupo é 4,90 km, contra 8,70
+km de um controle com os CEPs embaralhados. A razão de 0,56 mostra que CEP-5 é
+informativo, porém apenas cerca de duas vezes melhor que agrupar ao azar, numa
+cidade cujo raio inteiro é da ordem de 17 km. Não é vizinhança. Detalhado na
+seção 2.2 de [`04-dados-externos.md`](04-dados-externos.md).

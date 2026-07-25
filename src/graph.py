@@ -254,10 +254,52 @@ class GrafoGeografico:
         return self.arestas.num_rows
 
 
+def _descartar_fora_da_amostra(df: pd.DataFrame, desvios: float) -> pd.DataFrame:
+    """
+    Descarta coordenada distante do corpo da amostra.
+
+    A caixa do Brasil não basta. Medido em São Paulo, 1,2% das coordenadas
+    existentes caem fora do município, chegando a 197 km do centro numa cidade de
+    cerca de 35 km de largura — passam pela caixa nacional e mesmo assim são
+    lixo. Ver D-17.
+
+    O corte é relativo à própria amostra, não a uma caixa fixa: usa a mediana
+    como centro e o desvio absoluto mediano (MAD) como escala, ambos robustos aos
+    outliers que se quer remover. Uma caixa fixa por município exigiria uma
+    tabela de caixas e quebraria ao trocar o recorte espacial.
+
+    O default de `desvios` foi calibrado contra o comportamento de uma caixa
+    desenhada à mão em torno do município de São Paulo, que retinha 98,8% das
+    coordenadas. Em 202201, sobre 15.412 pontos:
+
+        desvios=20  retém 94,03%  raio máximo 21,3 km
+        desvios=40  retém 98,68%  raio máximo 39,2 km   <- default
+        desvios=80  retém 99,40%  raio máximo 76,3 km
+
+    O MAD é pequeno porque os estabelecimentos se concentram no centro, e é por
+    isso que o múltiplo precisa ser grande — 10 desvios descartaria 19% de
+    pontos legítimos.
+    """
+    if len(df) < 10:
+        return df
+
+    centro = df[[COL_LATITUDE, COL_LONGITUDE]].median()
+    desvio_absoluto = (df[[COL_LATITUDE, COL_LONGITUDE]] - centro).abs()
+    mad = desvio_absoluto.median()
+    # MAD zero acontece quando quase tudo está no mesmo ponto; aí não há escala
+    # para comparar e o corte é abandonado em vez de descartar tudo.
+    if (mad <= 0).any():
+        return df
+
+    dentro = (desvio_absoluto <= desvios * mad).all(axis=1)
+    return df[dentro]
+
+
 def coordenadas_por_unidade(
     db: Database,
     periodo_referencia: str | None = None,
     politica: str = "mais_antiga",
+    desvios: float = 40.0,
 ) -> pd.DataFrame:
     """
     Extrai uma coordenada por estabelecimento, tratada como invariante no tempo.
@@ -277,6 +319,9 @@ def coordenadas_por_unidade(
     `periodo_referencia` corta a série antes de escolher, o que permite montar o
     grafo sem enxergar nada além de uma data — útil para verificar quanto o
     resultado depende da suposição de invariância.
+
+    `desvios` controla o corte de outlier relativo à amostra, em múltiplos do
+    desvio absoluto mediano. Ver `_descartar_fora_da_amostra` e D-17.
 
     Linhas sem coordenada utilizável são descartadas. Contar o descarte é
     responsabilidade do chamador, e reportá-lo ao lado da métrica é obrigação
@@ -302,8 +347,9 @@ def coordenadas_por_unidade(
     df = df.dropna(subset=[COL_LATITUDE, COL_LONGITUDE])
     # Sentinela do CNES: coordenada zerada é ausência, não a ilha de Null.
     df = df[(df[COL_LATITUDE] != 0) | (df[COL_LONGITUDE] != 0)]
-    # Brasil inteiro cabe nesta caixa; fora dela é erro de digitação.
+    # Caixa do Brasil: descarta erro grosseiro de sinal ou de campo trocado.
     df = df[df[COL_LATITUDE].between(-34.0, 6.0) & df[COL_LONGITUDE].between(-74.0, -34.0)]
+    df = _descartar_fora_da_amostra(df, desvios)
 
     agrupado = df.sort_values(COL_TEMPO).groupby(COL_ENTIDADE, as_index=False)
     escolhido = agrupado.first() if politica == "mais_antiga" else agrupado.last()
