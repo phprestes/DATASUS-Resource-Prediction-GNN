@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import pyarrow.compute as pc
 import torch
 import torch.nn.functional as F
 from torch.nn import Embedding, LayerNorm, ModuleDict
@@ -234,61 +235,147 @@ def grafo_geografico_para_data(
     return Data(x=features, edge_index=edge_index)
 
 
+def escolher_categoria(tabela: str) -> str | None:
+    """
+    Coluna que define o vocabulário de categorias de uma tabela de fato.
+
+    Prefere a chave natural declarada em `docs/01-selecao-tabelas.md` quando
+    existe, porque ela é exatamente o que identifica a linha além do
+    estabelecimento. Sem ela, cai para a coluna `category` de maior
+    cardinalidade, evitando `co_municipio` — que é localização, não uma
+    categoria da relação, e só serve como último recurso.
+    """
+    from src.schema import CNES_DTYPES, CNES_NATURAL_KEY, CNES_USEFUL_COLUMNS
+
+    dtypes = CNES_DTYPES.get(tabela, {})
+    natural = [c for c in CNES_NATURAL_KEY.get(tabela, ()) if c != COL_ENTIDADE]
+    if natural:
+        return natural[0]
+
+    candidatas = [
+        c
+        for c in CNES_USEFUL_COLUMNS.get(tabela, [])
+        if c != COL_ENTIDADE and dtypes.get(c) == "category"
+    ]
+    if not candidatas:
+        return None
+    sem_municipio = [c for c in candidatas if c != "co_municipio"]
+    return (sem_municipio or candidatas)[0]
+
+
+def _features_de_categoria(n: int, dim: int = 32, semente: int = SEMENTE) -> torch.Tensor:
+    """
+    Vetores fixos e distinguíveis, um por categoria.
+
+    Nós de categoria não têm atributos próprios: são apenas identidades. Dar a
+    todos o mesmo vetor de uns os tornaria indistinguíveis depois da projeção
+    linear, e a GNN não conseguiria diferenciar tomógrafo de aparelho de raio-X.
+
+    A alternativa óbvia, one-hot, custaria uma matriz `n × n` — inviável para os
+    vocabulários maiores. Usa-se então uma projeção aleatória fixa, que preserva
+    distinguibilidade em dimensão baixa e é determinística pela semente.
+    """
+    gerador = torch.Generator().manual_seed(semente)
+    return torch.randn((n, min(dim, max(n, 1))), generator=gerador)
+
+
 def grafo_relacional_para_data(
-    db: Database, unidades: list[str], features: torch.Tensor
+    db: Database,
+    unidades: list[str],
+    features: torch.Tensor,
+    ate_periodo: str | None = None,
+    min_arestas: int = 100,
 ) -> HeteroData:
     """
-    Monta o HeteroData a partir das chaves estrangeiras do Database.
+    Monta o HeteroData tratando as tabelas de fato como **listas de arestas**.
 
-    Cada tabela filha vira um tipo de nó, e cada chave estrangeira uma relação.
-    As features de nó das filhas são as colunas numéricas da própria tabela; as
-    categóricas entram como códigos. É uma codificação deliberadamente simples —
-    ver a nota 2 no topo do módulo.
+    Esta é a correção de uma modelagem errada que só ficou visível ao expandir o
+    recorte. A versão anterior criava **um nó por linha** de tabela filha. No
+    município isso dava algumas centenas de milhares de nós e passava; no estado
+    dá 28 milhões, o que é inviável — e, mais importante, é conceitualmente
+    errado.
+
+    Uma linha de `rlEstabEquipamento` não é uma entidade: é a afirmação de que
+    um estabelecimento tem um **tipo** de equipamento. A maioria das tabelas de
+    fato do CNES é assim, uma lista de arestas entre o estabelecimento e um
+    código de um vocabulário pequeno — 99 tipos de equipamento, 69 tipos de
+    leito, 72 serviços. Modelando desse jeito, os 28 milhões de nós viram cerca
+    de 20 mil nós de categoria e um número comparável de arestas.
+
+    O ganho não é só de custo. Com um nó por linha, duas unidades com o mesmo
+    tomógrafo não compartilhavam nenhum vizinho, e a GNN não tinha por onde
+    propagar informação entre elas. Com nó por categoria, o tomógrafo é um
+    vizinho comum — que é exatamente a estrutura que a trilha 2 existe para
+    testar.
+
+    `ate_periodo` é obrigatório e deve ser
+    `ParticaoTemporal.antes_de_todos_os_rotulos`, **não** `fim_do_treino`. O
+    grafo aqui é estático: uma única estrutura serve treino, validação e teste.
+    Cortá-lo em `fim_do_treino` deixaria a transição de treino que termina nesse
+    período com o rótulo escrito no grafo, porque a aresta entre estabelecimento
+    e equipamento em `t+1` é exatamente o alvo. Ver D-25.
+
+    `min_arestas` descarta relações raras demais para contribuir.
     """
-    from src.graph import TABELA_RAIZ
+    from src.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
+
+    if ate_periodo is None:
+        raise ErroGNN(
+            "grafo relacional estático exige `ate_periodo`. Passe "
+            "`particao.antes_de_todos_os_rotulos` — usar `fim_do_treino` coloca "
+            "o rótulo dentro do grafo (D-25)."
+        )
 
     dados = HeteroData()
     dados[TABELA_RAIZ].x = features
     idx_unidade = {u: i for i, u in enumerate(unidades)}
+    limite = data_do_periodo(ate_periodo)
+    resumo: dict[str, int] = {}
 
     for nome, tabela in db.table_dict.items():
         if nome == TABELA_RAIZ:
             continue
-        fkeys = tabela.fkey_col_to_pkey_table or {}
-        if COL_ENTIDADE not in fkeys:
+        if COL_ENTIDADE not in (tabela.fkey_col_to_pkey_table or {}):
+            continue
+        coluna = escolher_categoria(nome)
+        if coluna is None or coluna not in tabela.df.column_names:
             continue
 
-        df = tabela.df.to_pandas()
-        df = df[df[COL_ENTIDADE].isin(idx_unidade)]
-        if df.empty:
+        # Projeta só as três colunas necessárias antes de sair do pyarrow: a
+        # tabela inteira em pandas custaria gigabytes nas maiores.
+        fatia = tabela.df.select([COL_ENTIDADE, coluna, COL_TEMPO])
+        if limite is not None:
+            fatia = fatia.filter(pc.less_equal(pc.field(COL_TEMPO), limite))
+        if fatia.num_rows == 0:
             continue
 
-        numericas = [
-            c
-            for c in df.columns
-            if c != COL_ENTIDADE and pd.api.types.is_numeric_dtype(df[c])
-        ]
-        x = (
-            torch.tensor(
-                df[numericas].astype(float).fillna(-1.0).to_numpy(), dtype=torch.float
-            )
-            if numericas
-            else torch.ones((len(df), 1), dtype=torch.float)
+        pares = (
+            fatia.select([COL_ENTIDADE, coluna])
+            .to_pandas()
+            .dropna()
+            .drop_duplicates()
         )
-        dados[nome].x = x
+        pares = pares[pares[COL_ENTIDADE].isin(idx_unidade)]
+        if len(pares) < min_arestas:
+            continue
 
-        destino = torch.tensor(
-            df[COL_ENTIDADE].map(idx_unidade).to_numpy(), dtype=torch.long
+        categorias = pd.Categorical(pares[coluna])
+        origem = torch.as_tensor(
+            pares[COL_ENTIDADE].map(idx_unidade).to_numpy(), dtype=torch.long
         )
-        origem = torch.arange(len(df), dtype=torch.long)
-        dados[nome, "pertence_a", TABELA_RAIZ].edge_index = torch.stack([origem, destino])
-        dados[TABELA_RAIZ, "tem", nome].edge_index = torch.stack([destino, origem])
+        destino = torch.as_tensor(categorias.codes.astype("int64"))
+
+        dados[nome].x = _features_de_categoria(len(categorias.categories))
+        dados[TABELA_RAIZ, f"tem_{nome}", nome].edge_index = torch.stack([origem, destino])
+        dados[nome, f"em_{nome}", TABELA_RAIZ].edge_index = torch.stack([destino, origem])
+        resumo[nome] = len(pares)
 
     if not dados.edge_types:
         raise ErroGNN(
             "grafo relacional sem aresta alguma. Confira se as tabelas filhas "
-            "têm co_unidade e se o filtro de município não zerou tudo."
+            "têm co_unidade e se o recorte não zerou tudo."
         )
+    dados.resumo_arestas = resumo
     return dados
 
 
@@ -331,6 +418,32 @@ def _tensores_da_tarefa(
     )
 
 
+def _pontuar_em_blocos(
+    modelo: ModeloAquisicao,
+    z: torch.Tensor,
+    u: torch.Tensor,
+    k: torch.Tensor,
+    dispositivo: str,
+    bloco: int = 1_000_000,
+) -> np.ndarray:
+    """
+    Pontua pares em blocos, devolvendo `float32`.
+
+    O conjunto de teste do estado tem 11,7 milhões de pares. Passar tudo de uma
+    vez pelo MLP do decoder materializaria uma matriz de entrada de vários
+    gigabytes; em blocos, o pico é o de um bloco. `float32` em vez de `float64`
+    corta o resultado pela metade sem perda relevante para ranquear.
+    """
+    saidas = []
+    for inicio in range(0, len(u), bloco):
+        fim = inicio + bloco
+        logito = modelo.decoder(
+            z[u[inicio:fim].to(dispositivo)], k[inicio:fim].to(dispositivo)
+        )
+        saidas.append(torch.sigmoid(logito).cpu().numpy().astype(np.float32))
+    return np.concatenate(saidas) if saidas else np.empty(0, dtype=np.float32)
+
+
 def _codificar_grafo(modelo: ModeloAquisicao, dados, tabela_raiz: str) -> torch.Tensor:
     """Roda o encoder e devolve o embedding dos estabelecimentos."""
     if isinstance(dados, HeteroData):
@@ -350,6 +463,8 @@ def treinar_aquisicao(
     paciencia: int = 20,
     dispositivo: str | None = None,
     verboso: bool = False,
+    lote_treino: int = 500_000,
+    amostra_validacao: int = 2_000_000,
 ) -> tuple[ModeloAquisicao, dict]:
     """
     Treina o modelo de aquisição, selecionando época pela **validação**.
@@ -357,6 +472,23 @@ def treinar_aquisicao(
     A parada antecipada olha o AP de validação, nunca o de teste. Esse é o ponto
     que o código anterior errava: `test()` avaliava sobre `train_mask`, então não
     havia separação alguma entre ajustar e medir.
+
+    ### Por que há minilote e subamostra aqui
+
+    No recorte estadual o treino tem 4,2 milhões de pares e a validação 21
+    milhões. Pontuar tudo a cada época é inviável em tempo e memória: só a
+    entrada do MLP do decoder para 4,2 milhões de pares passa de um gigabyte.
+
+    - `lote_treino` sorteia um minilote de pares por época. O encoder roda uma
+      vez sobre o grafo inteiro — que é pequeno — e só o decoder trabalha em
+      lote. Ao longo das épocas o modelo vê o conjunto todo.
+    - `amostra_validacao` usa um subconjunto **fixo** da validação como sinal de
+      parada antecipada. Fixo importa: se a amostra mudasse a cada época, a
+      comparação entre épocas mediria ruído de amostragem além de desempenho.
+
+    Nada disso toca o **teste**, que é sempre pontuado por completo em
+    `prever_aquisicao`. Subamostrar a avaliação final tornaria a prevalência
+    artificial e o AP incomparável (D-23).
 
     Devolve o modelo com os pesos da melhor época de validação, e o histórico.
     """
@@ -377,31 +509,40 @@ def treinar_aquisicao(
         encoder, DecoderAquisicao(dim_no, len(indice.itens))
     ).to(dispositivo)
 
-    conjuntos = {
-        nome: _tensores_da_tarefa(tarefa, indice, nome)
-        for nome in ("treino", "validacao")
-    }
+    u_tr, k_tr, y_tr, _ = _tensores_da_tarefa(tarefa, indice, "treino")
+    u_va, k_va, y_va, _ = _tensores_da_tarefa(tarefa, indice, "validacao")
+
+    # Amostra de validação fixa, sorteada uma vez. Ver a docstring.
+    gerador = torch.Generator().manual_seed(SEMENTE)
+    if len(y_va) > amostra_validacao:
+        escolha = torch.randperm(len(y_va), generator=gerador)[:amostra_validacao]
+        u_va, k_va, y_va = u_va[escolha], k_va[escolha], y_va[escolha]
+    y_va_np = y_va.numpy()
+
     otimizador = torch.optim.Adam(modelo.parameters(), lr=lr)
 
     # Positivos são raros; sem reponderação a perda é minimizada prevendo sempre
     # zero, que é exatamente a baseline de persistência.
-    y_treino = conjuntos["treino"][2]
-    positivos = float(y_treino.sum())
+    positivos = float(y_tr.sum())
     peso = torch.tensor(
-        (len(y_treino) - positivos) / max(positivos, 1.0), device=dispositivo
+        (len(y_tr) - positivos) / max(positivos, 1.0), device=dispositivo
     )
 
     historico: list[dict] = []
     melhor_ap, melhor_epoca, melhores_pesos, sem_melhora = -1.0, -1, None, 0
+    n_lote = min(lote_treino, len(y_tr))
 
     for epoca in range(epocas):
         modelo.train()
         otimizador.zero_grad()
         z = _codificar_grafo(modelo, dados, TABELA_RAIZ)
-        u, k, y, _ = conjuntos["treino"]
-        logito = modelo.decoder(z[u.to(dispositivo)], k.to(dispositivo))
+
+        lote = torch.randint(0, len(y_tr), (n_lote,), generator=gerador)
+        logito = modelo.decoder(
+            z[u_tr[lote].to(dispositivo)], k_tr[lote].to(dispositivo)
+        )
         perda = F.binary_cross_entropy_with_logits(
-            logito, y.to(dispositivo), pos_weight=peso
+            logito, y_tr[lote].to(dispositivo), pos_weight=peso
         )
         perda.backward()
         otimizador.step()
@@ -409,11 +550,8 @@ def treinar_aquisicao(
         modelo.eval()
         with torch.no_grad():
             z = _codificar_grafo(modelo, dados, TABELA_RAIZ)
-            u_v, k_v, y_v, _ = conjuntos["validacao"]
-            escore = torch.sigmoid(
-                modelo.decoder(z[u_v.to(dispositivo)], k_v.to(dispositivo))
-            )
-            ap = average_precision(y_v.numpy(), escore.cpu().numpy())
+            escore = _pontuar_em_blocos(modelo, z, u_va, k_va, dispositivo)
+            ap = average_precision(y_va_np, escore)
 
         historico.append(
             {"epoca": epoca, "perda": float(perda.detach()), "ap_validacao": ap}
@@ -468,16 +606,23 @@ def prever_aquisicao(
     modelo.eval()
     with torch.no_grad():
         z = _codificar_grafo(modelo, dados, TABELA_RAIZ)
-        escore = torch.sigmoid(
-            modelo.decoder(z[u.to(dispositivo)], k.to(dispositivo))
-        )
+        escore = _pontuar_em_blocos(modelo, z, u, k, dispositivo)
+
+    entidades = df[tarefa.col_entidade]
+    if isinstance(entidades.dtype, pd.CategoricalDtype):
+        codigos = entidades.cat.codes.to_numpy()
+        rotulos = np.asarray(entidades.cat.categories)
+    else:
+        codigos, rotulos = pd.factorize(entidades, sort=False)
+        rotulos = np.asarray(rotulos)
 
     return Previsao(
         modelo=nome,
         conjunto=conjunto,
-        escore=escore.cpu().numpy(),
+        escore=escore,
         y=y.numpy(),
-        entidades=df[tarefa.col_entidade].to_numpy(),
+        entidades=codigos,
+        rotulos_entidade=rotulos,
         metadados={
             "n_nos": int(dados[TABELA_RAIZ].num_nodes)
             if isinstance(dados, HeteroData)

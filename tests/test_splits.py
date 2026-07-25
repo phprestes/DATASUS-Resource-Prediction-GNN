@@ -38,6 +38,25 @@ def test_particao_canonica_bate_com_a_metodologia():
     assert p.fim_do_treino == "202201"
 
 
+def test_corte_do_grafo_e_anterior_a_todos_os_rotulos():
+    """
+    O corte que um grafo estático precisa respeitar, e por que não é o mesmo
+    que o das features.
+
+    Com o grafo cortado em `fim_do_treino`, a transição de treino que termina
+    naquele período tem o rótulo escrito no grafo: a aresta entre
+    estabelecimento e equipamento em `t+1` é o alvo. Ver D-25.
+    """
+    p = particionar(ANUAIS)
+
+    assert p.antes_de_todos_os_rotulos == "201701"
+    assert p.antes_de_todos_os_rotulos < p.fim_do_treino
+
+    # Nenhum destino de rótulo, em nenhum conjunto, pode ser visível no grafo.
+    todos = p.treino + p.validacao + p.teste
+    assert all(p.antes_de_todos_os_rotulos < t.destino for t in todos)
+
+
 def test_nove_snapshots_produzem_oito_transicoes():
     p = particionar(ANUAIS)
     total = len(p.treino) + len(p.validacao) + len(p.teste)

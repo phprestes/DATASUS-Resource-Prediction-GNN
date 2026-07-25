@@ -806,3 +806,50 @@ A quinta baseline não entrou nesta execução. Com 136 mil estabelecimentos e u
 mínimo de 30 exemplos de treino por entidade, poucos qualificam, e o custo de
 ajustar milhares de modelos separados não se justificava antes de haver as GNNs
 para comparar. Fica para a execução completa da trilha 1.
+
+---
+
+## D-25 — O grafo estático precisa ser cortado antes de *todos* os rótulos
+
+**Data:** 2026-07-25 · **Status:** aceita
+
+**Contexto.** As features de estabelecimento são cortadas em
+`ParticaoTemporal.fim_do_treino` (202201), o que está correto para features. Ao
+montar o grafo relacional com o mesmo corte, apareceu um vazamento de outra
+natureza.
+
+**O vazamento.** O grafo é **estático**: uma única estrutura serve treino,
+validação e teste. Os rótulos de treino, porém, vêm das transições que terminam
+em 201801, 201901, 202001, 202101 e **202201**. Com o grafo cortado em 202201, a
+aresta entre estabelecimento e tipo de equipamento naquele snapshot **é o rótulo**
+da última transição de treino. O modelo não precisaria aprender nada: bastaria
+consultar a própria aresta.
+
+Vale notar que o vazamento não é do teste. O teste é a transição 2025, e o grafo
+parava em 2022. O treino é que estava contaminado — o que produziria um modelo
+que aprende a ler o grafo em vez de generalizar, e um desempenho de teste
+provavelmente **pior**, não melhor. Vazamento no treino engana o processo de
+ajuste, não a métrica final.
+
+**Decisão.** `ParticaoTemporal.antes_de_todos_os_rotulos` devolve a origem da
+primeira transição de treino — 201701 — e é o corte que o grafo estático usa.
+`grafo_relacional_para_data` passa a **exigir** `ate_periodo` e a documentar que
+`fim_do_treino` é a escolha errada ali.
+
+**O custo, declarado.** A estrutura do grafo passa a ser a de 2017 para prever
+aquisições de 2018 a 2025. É conservador, e desfavorece as trilhas 2 e 3 na
+comparação. Continua sendo um teste justo do que o experimento quer medir: as
+baselines da trilha 1 não recebem nenhuma informação estrutural, então mesmo um
+grafo velho é mais do que elas têm.
+
+Também vale para a trilha 3 pelo mesmo motivo, com um agravante: em 201701 só
+1,1% dos estabelecimentos do estado tinham coordenada (D-22). Como D-15 trata a
+posição como invariante no tempo e a toma da observação mais antiga disponível, a
+trilha 3 não é afetada — a posição não é uma aresta datada.
+
+**A solução correta, não implementada.** Um grafo **temporal**, com arestas
+datadas e visibilidade por exemplo: cada par `(u, k)` da transição `t → t+1` veria
+apenas arestas com data `≤ t`. É o que o RelBench faz com `time_col` e
+amostragem temporal de vizinhança. Custa uma reamostragem do grafo por transição
+e não cabia nesta iteração. Fica registrado como a extensão de maior valor para
+as trilhas estruturais.

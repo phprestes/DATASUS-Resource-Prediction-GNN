@@ -64,6 +64,24 @@ class ParticaoTemporal:
         """
         return self.treino[-1].destino
 
+    @property
+    def antes_de_todos_os_rotulos(self) -> str:
+        """
+        Último snapshot anterior a **qualquer** rótulo, de qualquer conjunto.
+
+        É o corte que um grafo **estático** precisa respeitar, e é mais
+        restritivo que `fim_do_treino`. A diferença importa e já produziu
+        vazamento: com o grafo cortado em `fim_do_treino`, a transição de treino
+        que termina nesse mesmo período tem o rótulo escrito no grafo — a aresta
+        entre estabelecimento e equipamento em `t+1` *é* o alvo.
+
+        Cortar aqui torna o grafo idêntico e livre de vazamento para todos os
+        conjuntos, ao custo de a estrutura ser mais antiga que os exemplos. Um
+        grafo temporal, com arestas datadas e visibilidade por exemplo, é a
+        solução correta e mais cara; ver D-25.
+        """
+        return self.treino[0].origem
+
     def conjunto_de(self, transicao: Transicao) -> str | None:
         for nome, grupo in self.conjuntos.items():
             if transicao in grupo:
