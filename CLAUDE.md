@@ -4,68 +4,92 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Undergraduate research project (Iniciação Científica) on Brazilian CNES data (National Registry of Health Establishments, DATASUS). Goal: turn the raw monthly CNES dumps into a [RelBench](https://relbench.stanford.edu/) relational-deep-learning dataset and train a heterogeneous GNN to predict hospital bed counts.
+Undergraduate research project (Iniciação Científica) on Brazilian CNES data (National Registry of Health Establishments, DATASUS). It asks whether resource scarcity in a municipal health network can be identified and anticipated from the network's *structure* — not just from each establishment's own attributes.
 
-Code comments, print statements and docs are in **Portuguese**. Keep new code consistent with that.
+Code comments, docstrings, prints and docs are in **Portuguese**. Keep new code consistent with that. Commit messages are in Portuguese too.
 
-Not a git repository (a `.gitignore` exists but no `.git`). No test suite, no linter, no `requirements.txt` — dependencies live only in `.venv`.
+## Read the docs first
+
+Three Markdown files in [docs/](docs/) are the project's contract. They are not summaries of the code — the code is downstream of them.
+
+- **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/schema.py](src/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
+- **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
+- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 14 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+
+`docs/SelecaoTabelas_v1.pdf` and `_v2.pdf` are historical records, superseded by `01-selecao-tabelas.md`. `docs/CNES_GNN-2.pdf` is the original project proposal; the code has deliberately diverged from it (see D-01).
 
 ## Environment & commands
 
-Python 3.12 in `.venv`. Package is installed editable as `meu_projeto_ic` (see [setup.py](setup.py)), so `src` is importable, but scripts still use absolute `from src.constant import ...` imports and **must be run from the project root as modules**:
+Python 3.12 in `.venv`, managed by **uv** (there is no `pip` inside it). Package installed editable as `meu-projeto-ic`.
 
 ```bash
 source .venv/bin/activate
 
-python -m src.extract      # download CNES ZIPs        -> data/01_raw
-python -m src.to_sql       # ZIP CSVs -> DuckDB        -> data/02_intermediate
-python -m src.to_parquet   # DuckDB -> cleaned Parquet -> data/03_primary
+# ETL. Each stage reads the previous layer and writes the next.
+python -m src.extract              # 9 annual ZIPs -> data/01_raw   (~2.9 GB)
+python -m src.extract 202501       # or specific competências
+python -m src.to_sql               # ZIP CSVs -> DuckDB per period  -> data/02_intermediate
+python -m src.to_parquet           # DuckDB -> typed Parquet        -> data/03_primary
+python -m src.changes              # snapshot diffs -> change events -> data/04_feature
+
+python -m pytest tests/ -q         # full suite
+python -m pytest tests/test_schema.py::test_fact_tables_e_useful_columns_nao_podem_divergir
 ```
 
-Each `__main__` block auto-discovers periods by globbing the previous stage's output, so re-running the chain needs no arguments. `src.extract`'s `__main__` is hardcoded to `["201701"]` — edit it or call `download_cnes_zips(periods)` directly. To pick periods explicitly, import the function in a notebook (notebook 01 does this).
+All ETL stages default to `reprocess=False` (skip what exists) — the series is several GB, so re-downloading by accident is expensive. Pass `reprocess=True` explicitly to redo work.
 
-Notebooks in [notebook/](notebook/) do `sys.path.append(Path.cwd().parent)` and are meant to run from that directory. Run order: `01_initial_analysis` (profiling, generates [docs/relatorio_analise_dados.md](docs/relatorio_analise_dados.md)) → `02_relacoes` (networkx graph of the schema from the data dictionary) → `03_relbench_modeling` (dataset → task → GNN training + naive-persistence baseline).
-
-Key versions: relbench 2.1.1, torch 2.9.1, torch_geometric 2.7.0, duckdb 1.5.2, pandas 3.0.2, pyarrow 23.0.1.
+`VIRTUAL_ENV=.venv uv pip install -e .` to reinstall. `pyg-lib`, `torch-scatter` and `torch-sparse` are not on PyPI and need the wheel index matched to the torch version — instructions are in the header of `requirements.txt`.
 
 ## Architecture
 
-### Pipeline stages (Kedro-style data layers)
+### Data layers
 
-`data/01_raw` (`BASE_DE_DADOS_CNES_{YYYYMM}.ZIP`) → `data/02_intermediate` (`sql_cnes_{YYYYMM}.duckdb`) → `data/03_primary` (`{YYYYMM}/{tableName}.parquet`) → relbench `Database`. `data/04_feature` exists but is unused.
+`data/01_raw` (`BASE_DE_DADOS_CNES_{YYYYMM}.ZIP`) → `data/02_intermediate` (`sql_cnes_{YYYYMM}.duckdb`) → `data/03_primary` (`{YYYYMM}/{tabela}.parquet`) → `data/04_feature/changes/{tabela}/{periodo}.parquet`. Nothing under `data/` is versioned; it is all reproducible from stage 1.
 
-Periods are always the 6-char string `YYYYMM` ("competência"). It is the partition key everywhere: filenames, DuckDB table suffixes, and primary-layer subfolders. The set used so far is `["201701", "201901", "202101", "202301", "202501"]`.
+The period is always the 6-char string `YYYYMM` ("competência") and is the partition key everywhere. The canonical sample is `src.extract.PERIODOS_ANUAIS` — January of each year, 2017–2025, nine snapshots and eight transitions (D-04).
 
-### `src/constant.py` is the schema contract
+### Time is the subtle part
 
-1298 lines, all hand-derived from [docs/DICIONARIO_DE_DADOS_CNES_2025.pdf](docs/DICIONARIO_DE_DADOS_CNES_2025.pdf). Five dicts/lists drive the whole pipeline; changing schema behavior means editing here, not the pipeline code:
+Read this before touching anything temporal. A competência ZIP is a **snapshot of current state**, not an event log, and it keeps only the **last** `dt_atualizacao` per row. So:
 
-- `FACT_TABLES` — allowlist of which CSVs get ingested at all (`to_sql`, `only_fact_tables=True`).
-- `CNES_USEFUL_COLUMNS` — per-table column allowlist for the Parquet layer. A table absent here is silently skipped by `to_parquet`.
-- `CNES_DTYPES` — per-column target types, expressed as pandas-ish strings (`'datetime64[ns]'`, `'Int64'`, `'float64'`) that `to_parquet` translates into DuckDB `TRY_CAST` / `try_strptime`.
-- `CNES_PKEY` / `CNES_FKEY` — the relational graph fed to relbench `Table(pkey_col=..., fkey_col_to_pkey_table=...)`.
+- `to_chardt_atualizacaoddmmyyyy` is **right-censored**. Using it as a graph `time_col` — as the old code did — assigns each row an instant that depends on when the snapshot was taken.
+- Changes between two snapshots are unrecoverable. The study's real temporal resolution is the snapshot spacing, not the date column's granularity.
+- The unit of analysis is therefore the **transition** `t → t+1` ([src/changes.py](src/changes.py)), and the graph's `time_col` is the **snapshot date** (Jan 1 of the competência), which is exact and uniform. Events supply labels; snapshots supply state. See D-08.
 
-Path constants (`RAW_FOLDER`, `INTERMEDIATE_FOLDER`, `PRIMARY_FOLDER`, `TEMP_EXTRACT_DIR`) are derived from `BASE_DIR = parent of src/`.
+### Modules
 
-### Naming and typing conventions to know
+| Module | Role |
+|---|---|
+| [src/paths.py](src/paths.py) | data layer locations, doc locations |
+| [src/schema.py](src/schema.py) | parses `01-selecao-tabelas.md`; strict, fails the import on malformed input |
+| [src/extract.py](src/extract.py), [src/to_sql.py](src/to_sql.py), [src/to_parquet.py](src/to_parquet.py) | the three ETL stages |
+| [src/changes.py](src/changes.py) | snapshot diffing, change events, change-rate measurement |
+| [src/splits.py](src/splits.py) | the single temporal partition, consumed by all modelling tracks |
+| [src/tasks.py](src/tasks.py) | label tables: acquisition (primary), quantity (secondary) |
+| [src/baselines.py](src/baselines.py) | track 1 — five baselines with no structural information |
+| [src/graph.py](src/graph.py) | tracks 2 and 3 — RelBench `Database`, and the geographic kNN graph |
+| [src/gnn.py](src/gnn.py) | encoders, shared pair decoder, training loop |
+| [src/metrics.py](src/metrics.py) | average precision, AUC, MAP@k, RMSE/MAE, results table |
 
-- CSVs inside the ZIP are named `{TableName}{YYYYMM}.csv`. [to_sql.py:43](src/to_sql.py#L43) recovers the base name with `stem_name[:-6]` (strip the period) to check against `FACT_TABLES`, but creates the DuckDB table under the **full suffixed name** (`tbEstabelecimento201701`). [to_parquet.py:35](src/to_parquet.py#L35) strips the suffix again to look up `CNES_USEFUL_COLUMNS`. Any change to the period width breaks both.
-- Ingest uses `all_varchar=True`, `normalize_names=True`, `sep=';'`, `encoding='ISO_8859_1'`, `ignore_errors=True`. So the intermediate layer is **all strings with lowercase snake_case column names**; all real typing happens in `to_parquet` via `CNES_DTYPES`.
-- `to_chardt_atualizacaoddmmyyyy` is the conventional timestamp column. Parsed as `%d/%m/%Y`; values before `1900-01-01` are nulled (CNES sentinel dates). `dataset.py` auto-detects it as relbench `time_col` when present.
-- `reprocess` defaults are inconsistent across stages: `True` in `extract`/`to_sql`, `False` in `to_parquet`. Pass it explicitly.
+`tools/build_selecao_inicial.py` is a one-shot migrator kept as a provenance record: it generated the first version of the selection doc by joining the old PDF, `src/constant.py` (read from git history — the file is deleted) and the empirical report. It refuses to overwrite the doc without `--force`.
 
-### relbench layer
+### Conventions that will bite you
 
-[src/dataset.py](src/dataset.py) — `CNESDataset.make_db(municipio_id=None)` builds the graph by globbing `data/03_primary/*/*.parquet`, so **all periods are unioned into one table per entity**; the period lives only in the timestamp column. `tbEstabelecimento` is the root node (pkey `co_unidade`).
+- **CSV naming.** Files inside the ZIP are `{TableName}{YYYYMM}.csv`. [to_sql.py](src/to_sql.py) strips the 6-char period to match `FACT_TABLES` but creates the DuckDB table under the **full suffixed name** (`tbEstabelecimento201701`); [to_parquet.py](src/to_parquet.py) strips it again. Changing the period width breaks both.
+- **Everything is VARCHAR at the intermediate layer.** Ingest uses `all_varchar=True`, `normalize_names=True`, `sep=';'`, `encoding='ISO_8859_1'`. Typing happens only in `to_parquet`, driven by `CNES_DTYPES`. `datetime64[ns]` triggers `try_strptime` with `%d/%m/%Y` and nulls dates before 1900-01-01 (a CNES sentinel).
+- **Three name spellings for the same thing.** Oracle dictionary (`RL_ESTAB_COMPLEMENTAR`), CSV/DuckDB (`rlEstabComplementar`), and date columns wrapped in the extraction's own SQL (`TO_CHAR(DT_ATUALIZACAO,'DD/MM/YYYY')` → `to_chardt_atualizacaoddmmyyyy`, sometimes with a table alias inside: `to_charadt_atualizacaoddmmyyyy`). Documented in `01-selecao-tabelas.md`.
+- **`pkey` is not a row key.** `CNES_PKEY` is the *entity* key RelBench joins on (`co_unidade`) and is almost never unique — `rlEstabEquipamento` has one row per equipment, not per establishment. Row identity is `CNES_NATURAL_KEY`, declared per table where known.
+- **Tables hold `pyarrow.Table`, not `pandas.DataFrame`.** Deliberate: the municipality filter is pushed into the Parquet scan. Call `.to_pandas()` explicitly; don't assume pandas.
+- **`municipio_id` is the main cost lever.** [graph.py](src/graph.py) filters the root on `co_municipio_gestor`, then pushes the resulting `co_unidade` set as an `isin` predicate into every child table's scan. Without it you load the whole country to discard 98%.
 
-The `municipio_id` argument is the main performance lever: it filters the root on `co_municipio_gestor`, then pushes an `isin(valid_unidades)` predicate down into every child table's pyarrow scan, extracting a municipal subgraph instead of loading the national dataset. Notebook 03 uses `"355030"` (São Paulo).
+### Comparability is the point of the design
 
-Tables are constructed with **pyarrow `Table` objects, not pandas DataFrames** (`Table(df=arrow_table)`). Downstream code must handle both — see the `hasattr(df_beds_pa, "select")` branch in [src/task.py:28](src/task.py#L28). Assume arrow unless proven otherwise.
+All tracks consume the same `TabelaTarefa` and the same `ParticaoTemporal`, and all return the same `Previsao` dataclass, so `src.metrics.tabela_de_resultados` can put them in one table. **Never report a GNN number without the persistence baseline beside it** (D-11) — the previous version of the project reported training-set performance as test performance, and nothing caught it.
 
-[src/task.py](src/task.py) — `PredictBedsTask`, an `EntityTask` regression on `qt_exist` from `rlEstabComplementar` aggregated per `co_unidade` over a forward window of `timedelta=730 days`. That 2-year window is tied to the 2-year spacing of the ingested periods.
+Track 1 must stay free of relational and spatial features. Adding neighbourhood aggregates to the baselines would erase the difference the experiment exists to measure.
 
-[src/model.py](src/model.py) — `BaseGNN` (2× `SAGEConv` + LayerNorm + dropout) wrapped by `to_hetero` inside `DynamicHeteroGNN`, with a per-node-type `Linear(-1, hidden)` projection dict to reconcile heterogeneous feature widths. Plus module-level `train`/`test` helpers that operate on a full `HeteroData` batch. Note `test()` currently reuses `train_mask` — the real val/test split logic lives inline in notebook 03, not in `model.py`.
+## Pending work
 
-### `archieved/`
+`notebook/00_analise_alvo.ipynb` is the blocking empirical gate (D-09, D-10): it must confirm the target choice, verify the declared natural keys are actually unique, re-run the empirical column filter over all nine snapshots, and check `nu_latitude`/`nu_longitude` coverage before the geographic track can be trusted. Notebooks `01`–`03` still need rewriting against the new modules.
 
-Pre-refactor monolithic scripts. They target the **old relbench API** (`relbench.data`, `relbench.data.task.NodeTask`, `RelBenchEncoder`) which no longer exists in 2.1.1. Useful only as historical reference for the CSV→table mapping intent; do not copy code from them.
+`archieved/` uses the old RelBench API (`relbench.data`, `NodeTask`, `RelBenchEncoder`), absent from 2.1.1. Historical reference only — do not copy code from it (D-12).
