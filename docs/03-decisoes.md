@@ -223,7 +223,7 @@ retoma essa intenção.
 
 ## D-09 — Alvo e parâmetros só se fecham após o gate empírico
 
-**Data:** 2026-07-25 · **Status:** pendente
+**Data:** 2026-07-25 · **Status:** FECHADA. Ver o resultado em D-18
 
 O `notebook/00_analise_alvo.ipynb` precisa confirmar ou refutar D-01 medindo,
 para cada tabela candidata, cobertura de nós, densidade de rótulo, volume de
@@ -240,12 +240,33 @@ O item da trilha geográfica já foi medido e fechado em D-15.
 
 ## D-10 — Densidade de snapshot é revisável pela evidência
 
-**Data:** 2026-07-25 · **Status:** pendente
+**Data:** 2026-07-25 · **Status:** FECHADA, densidade anual mantida
 
-D-04 fixa nove snapshots anuais provisoriamente. Se o notebook 00 mostrar que a
-taxa de mudança anual de `rlEstabEquipamento` é alta o bastante para que um ano
-esconda ciclos relevantes, densificar para trimestral ou mensal numa janela
-curta, ao custo de reexecutar o ETL.
+D-04 fixou nove snapshots anuais provisoriamente, sob a condição de densificar
+caso a taxa de mudança mostrasse que um ano esconde ciclos.
+
+**Medido.** Taxa de mudança anual de `rlEstabEquipamento`, sobre as oito
+transições, com chave natural declarada e portanto sem a inflação que afeta as
+tabelas sem chave:
+
+| Transição | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|---|---|---|
+| Taxa | 0,112 | 0,094 | 0,101 | 0,100 | 0,095 | 0,085 | 0,082 | 0,089 |
+
+Mediana de **0,094**, e a série é notavelmente plana: a amplitude inteira cabe
+entre 0,082 e 0,112, sem pico nas transições de pandemia. A mudança é dominada
+por inserção — de 63 mil a 89 mil por transição, contra cerca de 10 mil
+remoções — coerente com o crescimento de 67% que motivou D-01.
+
+**Decisão.** Densidade anual mantida. Uma taxa estável e moderada é justamente o
+que indica que o intervalo não está agregando eventos que se queira separar; não
+há evidência de ciclo escondido que justifique o custo de densificar.
+
+**Nota de leitura.** `tbEstabelecimento` aparece com taxa acima de 1,0 em 2018 e
+2020. Isso não é mudança real: a tabela não tem chave natural declarada, então
+cada modificação conta como uma remoção mais uma inserção, e a coluna `alterada`
+sai zerada. É o comportamento documentado em `src/changes.py`, não um defeito
+dos dados.
 
 ---
 
@@ -471,3 +492,133 @@ km de um controle com os CEPs embaralhados. A razão de 0,56 mostra que CEP-5 é
 informativo, porém apenas cerca de duas vezes melhor que agrupar ao azar, numa
 cidade cujo raio inteiro é da ordem de 17 km. Não é vizinhança. Detalhado na
 seção 2.2 de [`04-dados-externos.md`](04-dados-externos.md).
+
+---
+
+## D-18 — Resultado do gate empírico
+
+**Data:** 2026-07-25 · **Status:** aceita · **Fecha D-09**
+
+Executado sobre as nove competências, camada primária, recorte de São Paulo.
+
+### 1. Alvo: `rlEstabEquipamento` confirmado, com folga
+
+Eventos de aquisição somados nas oito transições, dentro de São Paulo:
+
+| Tabela candidata | Tipos de item | Candidatos | Aquisições | Prevalência mediana |
+|---|---|---|---|---|
+| `rlEstabEquipamento` | 99 | 18.473.151 | **12.081** | 0,065% |
+| `rlEstabServClass` | 72 | 13.919.717 | 8.992 | 0,062% |
+| `rlEstabInstFisiAssist` | 51 | 9.350.614 | 7.185 | 0,087% |
+| `rlEstabComplementar` (leitos) | 69 | 13.536.992 | **688** | 0,005% |
+
+D-01 se confirma, e por margem maior do que a evidência nacional sugeria. Leitos
+produzem 688 aquisições em oito transições — cerca de 86 por transição — o que
+não sustenta treino nem avaliação. Equipamentos produzem 17 vezes mais.
+
+`rlEstabInstFisiAssist` tem a maior prevalência e fica registrada como alvo
+alternativo caso a modelagem de equipamentos se mostre inviável.
+
+### 2. Chaves naturais: as duas hipóteses estavam certas
+
+Zero duplicatas em 201701 e 202501:
+
+- `rlEstabEquipamento` por (`co_unidade`, `co_equipamento`, `co_tipo_equipamento`, `tp_sus`)
+- `rlEstabComplementar` por (`co_unidade`, `co_leito`, `co_tipo_leito`)
+
+Deixam de ser hipóteses derivadas do dicionário e passam a ser fato verificado.
+A classificação `alterada` de `src/changes.py` é confiável para essas duas
+tabelas, e só para elas.
+
+### 3. Densidade anual: mantida
+
+Ver D-10, fechada com a série de taxas medida.
+
+### 4. Trilha geográfica: teto de 57%
+
+Ver D-15 e D-17, já fechadas antes deste gate.
+
+### 5. Filtro empírico sobre nove snapshots: uma rejeição
+
+`rlEstabUnidAcolhim.tp_sus_nao_sus`, constante em toda a série, reclassificada
+para `descartada`. O total de colunas `util` cai de 389 para 388.
+
+O resultado importa mais pelo que **não** mudou: ampliar de duas para nove
+competências acrescentou uma única rejeição. A triagem original era representativa,
+e o filtro de D-06 é estável — não é um crivo que aperta indefinidamente conforme
+se olha mais dado.
+
+---
+
+## D-19 — O desbalanceamento é intrínseco; MAP@k passa a ser a métrica de destaque
+
+**Data:** 2026-07-25 · **Status:** aceita
+
+**Contexto.** A tarefa de aquisição tem prevalência de 0,065%: um positivo a cada
+1.530 candidatos. São 18,5 milhões de exemplos para 12 mil eventos. Isso é severo
+mesmo para os padrões de predição de aresta.
+
+**Duas restrições do espaço de candidatos foram testadas e ambas rejeitadas.**
+
+1. *Restringir a pares (tipo de unidade, tipo de equipamento) já observados em
+   algum lugar do Brasil.* Dos 3.861 pares possíveis, 1.297 nunca ocorrem —
+   parecia promissor. Mas corta apenas **1,5%** dos candidatos e nenhum positivo:
+   os pares impossíveis combinam tipos raros com equipamentos raros, e quase não
+   aparecem em São Paulo. Ganho de prevalência de 1,02x. Não compensa a
+   complexidade.
+2. *Restringir a estabelecimentos que já têm ao menos um equipamento em `t`.*
+   Corta 49,6% dos candidatos, mas leva junto **32,7% dos positivos**, para um
+   ganho de prevalência de apenas 1,3x. Além de ser uma troca ruim, excluiria
+   justamente a **primeira aquisição** de um estabelecimento — provavelmente o
+   evento mais relevante do ponto de vista de política pública.
+
+**Decisão.** Nenhuma restrição. O espaço de candidatos permanece completo, e o
+desbalanceamento é tratado como característica do problema, não como defeito a
+corrigir por amostragem.
+
+**Consequência para o reporte.** O average precision continua sendo a métrica
+principal para comparar modelos entre si, mas o seu **valor absoluto deixa de ser
+interpretável** para um leitor: com prevalência de 0,00065, um AP de 0,02 é trinta
+vezes a linha de base e ainda assim parece próximo de zero.
+
+**MAP@k por estabelecimento passa a ser a métrica de destaque.** Ela responde à
+pergunta que o trabalho de fato faz — "quais equipamentos este estabelecimento
+provavelmente deveria ter?" — ranqueando 99 tipos dentro de cada estabelecimento,
+onde o desbalanceamento global não distorce a escala. Toda tabela de resultados
+traz as duas, com a prevalência ao lado, como já exige D-11.
+
+---
+
+## D-20 — O schema do CNES varia entre competências
+
+**Data:** 2026-07-25 · **Status:** aceita
+
+**Contexto.** A leitura conjunta dos nove snapshots falhou com erro de schema:
+`rlEstabPoloAldeia.co_dsei` existe em 201701 e não em 201901.
+
+**Extensão, medida.** Três das 44 tabelas têm colunas instáveis:
+
+| Tabela | Coluna | Ausente em |
+|---|---|---|
+| `tbEstabelecimento` | `st_contrato_formalizado` | 201901 |
+| `rlEstabPoloAldeia` | `co_dsei` | 201901 |
+| `tbCargaHorariaSus` | `qt_carga_hor_hosp_sus`, `qt_carga_horaria_outros` | 201901, 202001, 202101 |
+
+O padrão aponta para **201901 como competência anômala**, e não para uma evolução
+progressiva do schema: duas das três tabelas perdem a coluna só naquele ano e a
+recuperam depois.
+
+**Consequência.** A lista de colunas de
+[`01-selecao-tabelas.md`](01-selecao-tabelas.md) descreve o schema *modal*, não um
+schema que valha uniformemente na série. Código que lê vários snapshots precisa
+ser tolerante a isso:
+
+- `src/graph.py::_empilhar` já intersecta as colunas declaradas com as presentes
+  em cada arquivo, e concatena com `promote_options="permissive"`. Estava correto
+  por construção, não por sorte.
+- Qualquer leitura direta de múltiplos Parquet via DuckDB precisa de
+  `union_by_name=true`. Sem isso, falha em vez de degradar.
+
+**Descartado.** Remover as colunas instáveis da seleção. Elas são válidas em oito
+dos nove snapshots, e descartá-las por causa de uma competência anômala custaria
+mais informação do que o problema que resolve.

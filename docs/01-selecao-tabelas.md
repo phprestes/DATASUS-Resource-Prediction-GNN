@@ -724,7 +724,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `nu_vagas` | NUMBER(4) | Int64 | util | - | - | 0/0 | Número de vagas da Unidade de Acolhimento |
 | `co_profissional_sus` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Profissional de Saúde |
 | `co_cbo` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | Código Brasileiro de Ocupação |
-| `tp_sus_nao_sus` | CHAR(1) | category | util | - | `tbCargaHorariaSus` | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) |
+| `tp_sus_nao_sus` | CHAR(1) | category | descartada | - | - | 0/0 | filtro empírico: constante em todos os nove snapshots. Medido no gate; a triagem inicial via apenas duas competências e não a rejeitava |
 | `ind_vinculacao` | VARCHAR(6) | category | util | - | - | 0/0 | Indica a vinculação, o tipo e o sub tipo de vínculo |
 | `dt_ativacao` | DATE | datetime64[ns] | util | - | - | 0/0 | Data de Ativação |
 | `dt_desativacao` | DATE | datetime64[ns] | util | - | - | 99/100 | Data de Desativação |

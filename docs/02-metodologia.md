@@ -235,14 +235,22 @@ Regras que a implementação precisa garantir, e que os testes verificam:
 
 ### 6.2 Métricas
 
-Tarefa primária, classificação binária com forte desbalanceamento — a maioria
-dos pares `(estabelecimento, tipo de equipamento)` não sofre aquisição:
+Tarefa primária, classificação binária com desbalanceamento severo. Medido no
+gate: **prevalência de 0,065%**, ou um positivo a cada 1.530 candidatos — 18,5
+milhões de exemplos para 12 mil eventos de aquisição. Duas restrições do espaço
+de candidatos foram testadas e rejeitadas, então o desbalanceamento é tratado
+como característica do problema, não como defeito a corrigir (D-19).
 
-- **Average precision (AP)** como métrica principal. Preferida à AUC-ROC porque
-  AUC-ROC é otimista sob desbalanceamento severo.
-- **AUC-ROC** como secundária, por comparabilidade.
-- **MAP@k** por estabelecimento, porque o uso pretendido é ranquear onde olhar
-  primeiro, e ranking é o que a métrica precisa refletir.
+- **MAP@k por estabelecimento** é a métrica de destaque. Ela responde à pergunta
+  que o trabalho de fato faz — quais equipamentos este estabelecimento
+  provavelmente deveria ter — ranqueando os 99 tipos dentro de cada
+  estabelecimento, onde o desbalanceamento global não distorce a escala.
+- **Average precision (AP)** para comparar modelos entre si. Preferida à AUC-ROC,
+  que é otimista sob desbalanceamento severo. Mas o seu valor absoluto não é
+  interpretável aqui: com linha de base em 0,00065, um AP de 0,02 é trinta vezes
+  a prevalência e ainda assim parece próximo de zero. Sempre reportado com a
+  prevalência ao lado.
+- **AUC-ROC** como terciária, por comparabilidade com a literatura.
 
 Tarefa secundária, regressão: **RMSE** e **MAE**.
 
