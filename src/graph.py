@@ -127,16 +127,22 @@ def _empilhar(
     tabela: str,
     arquivos: dict[str, Path],
     filtro_unidades: set[str] | None,
+    colunas_pedidas: list[str] | None = None,
 ) -> pa.Table:
     """
     Lê os snapshots de uma tabela e os empilha com a coluna de tempo.
 
     O filtro por unidade é aplicado dentro do scan, não depois: sem isso, montar
-    o subgrafo de um município exige carregar o país inteiro na memória para
+    o subgrafo de um recorte exige carregar o país inteiro na memória para
     descartar quase tudo em seguida.
+
+    `colunas_pedidas` restringe a projeção. Importa: `tbDadosProfissionalSus` tem
+    48 milhões de linhas e `tbCargaHorariaSus` 10 milhões no estado, e carregar
+    todas as suas colunas quando o grafo só usa duas foi o que levou o processo a
+    5,3 GB.
     """
     fatias: list[pa.Table] = []
-    colunas_declaradas = CNES_USEFUL_COLUMNS[tabela]
+    colunas_declaradas = colunas_pedidas or CNES_USEFUL_COLUMNS[tabela]
 
     for periodo, caminho in arquivos.items():
         dataset = ds.dataset(str(caminho), format="parquet")
@@ -161,10 +167,39 @@ def _empilhar(
     return pa.concat_tables(fatias, promote_options="permissive")
 
 
+def colunas_minimas_para_grafo() -> dict[str, list[str]]:
+    """
+    Projeção mínima que a montagem do grafo precisa de cada tabela.
+
+    A tabela raiz entra inteira, porque dela saem as features de nó e as
+    coordenadas. As filhas entram com apenas duas colunas: a chave do
+    estabelecimento e a coluna que define o vocabulário de categorias — que é o
+    que vira aresta.
+
+    Sem essa restrição, `montar_db` no estado carrega 76 milhões de linhas com
+    todas as colunas e chega a 5,3 GB, num ambiente de 9 GB. Com ela, carrega o
+    que o grafo de fato usa.
+    """
+    from src.gnn import escolher_categoria
+
+    colunas = {TABELA_RAIZ: list(CNES_USEFUL_COLUMNS[TABELA_RAIZ])}
+    for tabela in CNES_USEFUL_COLUMNS:
+        if tabela == TABELA_RAIZ:
+            continue
+        if COL_ENTIDADE not in CNES_FKEY.get(tabela, {}):
+            continue
+        categoria = escolher_categoria(tabela)
+        if categoria is None:
+            continue
+        colunas[tabela] = [COL_ENTIDADE, categoria]
+    return colunas
+
+
 def montar_db(
     recorte: str | None = RECORTE_PADRAO,
     pasta: Path = PRIMARY_FOLDER,
     tolerar_falhas: bool = False,
+    colunas: dict[str, list[str]] | None = None,
 ) -> Database:
     """
     Monta o `Database` do RelBench empilhando os snapshots da camada primária.
@@ -177,6 +212,11 @@ def montar_db(
     `tolerar_falhas=True` registra e segue adiante quando uma tabela filha não
     pode ser lida. O default é falhar: uma tabela que desaparece em silêncio do
     grafo é pior que um erro, porque o experimento roda e o resultado engana.
+
+    `colunas` restringe a projeção por tabela, sobrescrevendo
+    `CNES_USEFUL_COLUMNS`. Use `colunas_minimas_para_grafo()` quando o destino
+    for a montagem do grafo: no recorte estadual isso é a diferença entre 5,3 GB
+    e caber na máquina. Tabelas ausentes do dicionário são omitidas do Database.
     """
     arquivos_raiz = periodos_com_tabela(TABELA_RAIZ, pasta)
     if not arquivos_raiz:
@@ -186,7 +226,9 @@ def montar_db(
             "&& python -m src.to_parquet"
         )
 
-    raiz = _empilhar(TABELA_RAIZ, arquivos_raiz, None)
+    raiz = _empilhar(
+        TABELA_RAIZ, arquivos_raiz, None, colunas.get(TABELA_RAIZ) if colunas else None
+    )
     filtro = filtro_recorte_arrow(recorte)
     if filtro is not None:
         raiz = raiz.filter(filtro)
@@ -203,14 +245,17 @@ def montar_db(
     # recriaria a referência pendurada de D-14.
     dados_por_tabela: dict[str, pa.Table] = {TABELA_RAIZ: raiz}
 
-    for nome in sorted(CNES_USEFUL_COLUMNS):
+    tabelas_alvo = sorted(colunas) if colunas else sorted(CNES_USEFUL_COLUMNS)
+    for nome in tabelas_alvo:
         if nome == TABELA_RAIZ:
             continue
         arquivos = periodos_com_tabela(nome, pasta)
         if not arquivos:
             continue
         try:
-            dados = _empilhar(nome, arquivos, unidades)
+            dados = _empilhar(
+                nome, arquivos, unidades, colunas.get(nome) if colunas else None
+            )
         except Exception as erro:
             if not tolerar_falhas:
                 raise ErroGrafo(f"falha ao empilhar {nome}: {erro}") from erro
