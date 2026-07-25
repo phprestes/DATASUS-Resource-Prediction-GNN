@@ -5,8 +5,7 @@
 __pycache__
 .pytest_cache
 
-# Dados. Nenhuma camada de data/ é versionada: 01_raw vem do CNES e as demais
-# são reprodutíveis a partir dela rodando o ETL (ver CLAUDE.md).
+# Dados
 data/01_raw/*
 data/02_intermediate/*
 data/03_primary/*
