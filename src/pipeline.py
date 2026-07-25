@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import zipfile
 from pathlib import Path
 
 from src.extract import PERIODOS_ANUAIS, download_cnes_zips
@@ -93,6 +94,16 @@ def rodar(
         zip_esperado = RAW_FOLDER / f"BASE_DE_DADOS_CNES_{periodo}.ZIP"
         if not zip_esperado.exists():
             print(f"[{periodo}] ZIP ausente. Pulando.")
+            continue
+
+        # Um ZIP truncado produzia uma competência com zero Parquet sem que nada
+        # falhasse, e o buraco só aparecia depois, na análise. Checar aqui custa
+        # milissegundos e transforma o silêncio em erro.
+        if not zipfile.is_zipfile(zip_esperado):
+            print(
+                f"[{periodo}] ZIP inválido ou truncado: {zip_esperado}. "
+                f"Apague-o e rode `python -m src.extract {periodo}` novamente."
+            )
             continue
 
         duckdb_path = INTERMEDIATE_FOLDER / f"sql_cnes_{periodo}.duckdb"

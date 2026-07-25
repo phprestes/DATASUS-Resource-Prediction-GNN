@@ -1,4 +1,5 @@
 from pathlib import Path
+import zipfile
 import requests
 from requests.exceptions import RequestException
 from typing import List
@@ -37,19 +38,26 @@ def download_cnes_zips(
             if file_path.exists() and not reprocess:
                 print(f"{file_name} já existe. Pulando...")
                 continue
-            
+
             print(f"Baixando {file_name}...")
+
+            # Baixa para um nome temporário e só renomeia ao concluir. Sem isso,
+            # um arquivo parcial ocupa o nome final e passa por completo para
+            # qualquer outro processo — foi assim que uma execução do ETL
+            # concorrente ao download leu um ZIP truncado como se estivesse
+            # pronto. O rename é atômico no mesmo sistema de arquivos.
+            parcial = file_path.with_suffix(".ZIP.parcial")
 
             try:
                 response = session.get(file_url, stream=True, timeout=30)
                 response.raise_for_status()
-            
+
                 total_size = int(response.headers.get('content-length', 0))
-                
-                with open(file_path, "wb") as f, tqdm(
+
+                with open(parcial, "wb") as f, tqdm(
                     total=total_size,
-                    unit='iB', 
-                    unit_scale=True, 
+                    unit='iB',
+                    unit_scale=True,
                     desc=f"Baixando {file_name}",
                 ) as progress_bar:
                     for chunk in response.iter_content(block_size):
@@ -58,11 +66,23 @@ def download_cnes_zips(
                             progress_bar.update(len(chunk))
 
                 if total_size and progress_bar.n != total_size:
-                    print(f"[AVISO] Download incompleto de {file_name}, removendo arquivo.")
-                    file_path.unlink(missing_ok=True)
-                    
+                    print(f"[AVISO] Download incompleto de {file_name}, descartando.")
+                    parcial.unlink(missing_ok=True)
+                    continue
+
+                # O servidor do CNES não manda content-length, então o tamanho
+                # esperado não é verificável. A checagem que resta é o ZIP abrir:
+                # um truncamento sobrevive ao download mas não ao teste.
+                if not zipfile.is_zipfile(parcial):
+                    print(f"[ERRO] {file_name} não é um ZIP válido, descartando.")
+                    parcial.unlink(missing_ok=True)
+                    continue
+
+                parcial.replace(file_path)
+
             except RequestException as e:
                 print(f"[ERRO] Falha ao baixar {file_name}: {e}")
+                parcial.unlink(missing_ok=True)
                 continue
 
 if __name__ == "__main__":
