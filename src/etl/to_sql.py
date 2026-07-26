@@ -17,7 +17,9 @@ def process_cnes_zip(
         output_folder : Path = INTERMEDIATE_FOLDER,
         reprocess : bool = False,
         only_fact_tables : bool = True,
-        tabelas : "List[str] | None" = None
+        tabelas : "List[str] | None" = None,
+        temp_folder : Path = TEMP_EXTRACT_DIR,
+        limite_memoria : "str | None" = None,
 ) -> None:
     """
     Carrega os CSV de cada ZIP de competência num DuckDB por competência.
@@ -33,6 +35,14 @@ def process_cnes_zip(
     **parcial**, e `to_parquet` executado sem argumento sobre ele exportaria só o
     que estiver lá. Apague o intermediário depois de usar, ou passe o mesmo
     subconjunto adiante.
+
+    `temp_folder` e `limite_memoria` existem para execução **paralela**, em que
+    várias competências são processadas ao mesmo tempo (`hpc/etl/pipeline.py`).
+    O diretório temporário é apagado no início da chamada, então dois processos
+    compartilhando o default deletariam os CSV um do outro; e sem teto o DuckDB
+    dimensiona o buffer pela RAM total da máquina, o que com N processos
+    significa N vezes a memória disponível. Nada disso muda o default de quem
+    roda uma competência por vez.
     """
     if tabelas is not None:
         desconhecidas = [t for t in tabelas if t not in FACT_TABLES]
@@ -42,9 +52,9 @@ def process_cnes_zip(
             )
         tabelas = set(tabelas)
     # Limpa diretório temporário se existir de execuções anteriores falhas
-    if TEMP_EXTRACT_DIR.exists():
-        shutil.rmtree(TEMP_EXTRACT_DIR)
-    TEMP_EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
+    if temp_folder.exists():
+        shutil.rmtree(temp_folder)
+    temp_folder.mkdir(parents=True, exist_ok=True)
 
     for period in tqdm(periods, desc="Processando períodos"):
         input_path = input_folder / f"{INPUT_PREFIX}{period}.ZIP"
@@ -59,6 +69,8 @@ def process_cnes_zip(
             continue
 
         con = duckdb.connect(output_path)
+        if limite_memoria:
+            con.execute(f"SET memory_limit='{limite_memoria}'")
 
         try:
             with zipfile.ZipFile(input_path, 'r') as z:
@@ -72,8 +84,8 @@ def process_cnes_zip(
                     if tabelas is not None and clean_name not in tabelas:
                         continue
 
-                    temp_csv_path = TEMP_EXTRACT_DIR / csv_file
-                    z.extract(csv_file, TEMP_EXTRACT_DIR)
+                    temp_csv_path = temp_folder / csv_file
+                    z.extract(csv_file, temp_folder)
 
                     try:
                         read_params = (
@@ -108,8 +120,8 @@ def process_cnes_zip(
         con.close()
 
     # Limpeza final
-    if TEMP_EXTRACT_DIR.exists():
-        shutil.rmtree(TEMP_EXTRACT_DIR)
+    if temp_folder.exists():
+        shutil.rmtree(temp_folder)
     
     print("Processamento finalizado com tabelas separadas por competência.")
 
