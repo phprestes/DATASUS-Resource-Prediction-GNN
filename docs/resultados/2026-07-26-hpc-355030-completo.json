@@ -1,0 +1,105 @@
+{
+  "experimento": "aquisicao de equipamento — pipeline do servidor",
+  "data": "2026-07-26",
+  "recorte": "355030",
+  "modo": "completo",
+  "snapshots": [
+    "201701",
+    "201801",
+    "201901",
+    "202001",
+    "202101",
+    "202201",
+    "202301",
+    "202401",
+    "202501",
+    "202601"
+  ],
+  "dispositivo": "cpu",
+  "maquina": {
+    "host": "acelora",
+    "plataforma": "Linux-6.12.95+deb13-amd64-x86_64-with-glibc2.41",
+    "cpus": 16,
+    "ram_gb": 9.6,
+    "disco_livre_gb": 3.7,
+    "raiz_de_dados": "/tmp/claude-1000/-home-phprestes-Documents-IC/2e2f73f7-9226-48c9-9819-8e999e2f5c14/scratchpad/ic-hpc",
+    "cuda_disponivel": false,
+    "versao_cuda": null,
+    "gpus": []
+  },
+  "particao": {
+    "treino": [
+      "201801",
+      "201901",
+      "202001",
+      "202101",
+      "202201",
+      "202301"
+    ],
+    "validacao": [
+      "202401",
+      "202501"
+    ],
+    "teste": [
+      "202601"
+    ]
+  },
+  "tarefa": {
+    "linhas": 22904833,
+    "positivos": 14973,
+    "memoria_gb": 0.194,
+    "negativos_por_positivo": null,
+    "segundos": 11
+  },
+  "grafos": {
+    "n": 9,
+    "por_origem": {
+      "201701": {
+        "tipos_no": 84,
+        "relacoes": 166,
+        "arestas": 541759
+      },
+      "201801": {
+        "tipos_no": 89,
+        "relacoes": 176,
+        "arestas": 595529
+      },
+      "201901": {
+        "tipos_no": 90,
+        "relacoes": 178,
+        "arestas": 653192
+      },
+      "202001": {
+        "tipos_no": 91,
+        "relacoes": 180,
+        "arestas": 749319
+      },
+      "202101": {
+        "tipos_no": 91,
+        "relacoes": 180,
+        "arestas": 821591
+      },
+      "202201": {
+        "tipos_no": 91,
+        "relacoes": 180,
+        "arestas": 886874
+      },
+      "202301": {
+        "tipos_no": 92,
+        "relacoes": 182,
+        "arestas": 968498
+      },
+      "202401": {
+        "tipos_no": 93,
+        "relacoes": 184,
+        "arestas": 1057566
+      },
+      "202501": {
+        "tipos_no": 93,
+        "relacoes": 184,
+        "arestas": 1239148
+      }
+    },
+    "com_atributos": true
+  }
+}

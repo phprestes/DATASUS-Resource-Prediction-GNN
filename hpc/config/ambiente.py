@@ -150,13 +150,39 @@ def exigir_cuda(permitir_cpu: bool = False) -> str:
     )
 
 
-def exigir_memoria(minimo_gb: float, o_que: str = "esta etapa") -> None:
-    """Recusa etapa que notoriamente não cabe na RAM disponível."""
+# RAM mínima para admitir que a máquina é o servidor, e não a estação de
+# trabalho. O cluster do IME tem 440 a 512 GB; a máquina de desenvolvimento tem 9.
+# Qualquer coisa abaixo deste piso não é o servidor.
+RAM_MINIMA_SERVIDOR_GB = 64.0
+
+
+def exigir_memoria(
+    minimo_gb: float = RAM_MINIMA_SERVIDOR_GB,
+    o_que: str = "esta etapa",
+    permitir_maquina_pequena: bool = False,
+) -> None:
+    """
+    Recusa etapa pesada em máquina pequena.
+
+    A recusa é o resultado de um acidente: uma tentativa de exercitar o caminho
+    completo na estação de trabalho de 9 GB esgotou a memória da máquina **e do
+    editor** do usuário. Montar o grafo com projeção completa, construir a tabela
+    de tarefa nacional ou treinar não são operações que caibam fora do servidor, e
+    o programa passa a dizer isso antes de tentar.
+
+    `permitir_maquina_pequena=True` existe para teste com dado sintético, onde o
+    tamanho é conhecido e minúsculo — nunca para dado real.
+    """
+    if permitir_maquina_pequena:
+        return
     perfil = perfil_maquina()
     if perfil.ram_gb == perfil.ram_gb and perfil.ram_gb < minimo_gb:
         raise ErroAmbiente(
-            f"{o_que} pede ao menos {minimo_gb:.0f} GB de RAM e a máquina tem "
-            f"{perfil.ram_gb:.0f} GB. Rode no servidor, ou reduza o recorte."
+            f"{o_que} pede ao menos {minimo_gb:.0f} GB de RAM e esta máquina tem "
+            f"{perfil.ram_gb:.0f} GB. O pipeline de hpc/ é para o servidor: rodá-lo "
+            "aqui compete com o ambiente de trabalho e já travou a sessão uma vez. "
+            "Se a intenção é exercitar o código, use os testes sintéticos "
+            "(tests/test_hpc_*.py), não a camada primária."
         )
 
 

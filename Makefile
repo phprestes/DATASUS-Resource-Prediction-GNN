@@ -1,5 +1,15 @@
 # Makefile do projeto — atalhos documentados para o que se roda com frequência.
 #
+# DOIS PIPELINES, ISOLADOS (D-34):
+#
+#   src/  roda nesta máquina, sob as limitações de 9 GB de RAM. São os alvos
+#         `etl`, `experimento`, `testes` — o caminho normal de trabalho.
+#   hpc/  roda no servidor do IME, com CUDA e recorte nacional. São os alvos
+#         prefixados `hpc-`, que delegam para hpc/Makefile.
+#
+# Os alvos `hpc-*` NÃO devem ser executados nesta máquina: o pipeline do servidor
+# é dimensionado para 440 GB, e o código recusa rodar abaixo de 64 GB de RAM.
+#
 # Toda receita usa o Python do .venv diretamente, sem depender de `activate`:
 # `make` abre um shell por linha, então um `source .venv/bin/activate` não
 # sobreviveria até a linha seguinte.
@@ -30,6 +40,10 @@ PERIODO  ?=
 # Pacote de modelo a validar. Vazio = o mais recente de models/.
 RUN      ?=
 
+# Modo do pipeline do servidor: `compativel` replica as limitações desta máquina,
+# `completo` levanta as quatro. As células da matriz de D-34 saem daqui.
+MODO     ?= completo
+
 EPOCAS   ?= 150
 
 # Envolve o comando num cgroup com teto de memória, se systemd-run existir.
@@ -38,14 +52,20 @@ LIMITADOR := $(shell command -v systemd-run >/dev/null 2>&1 && echo "systemd-run
 .DEFAULT_GOAL := help
 .PHONY: help setup etl etl-periodo mudancas reprocessar-tabelas testes teste-schema \
         verificar experimento experimento-baselines experimento-capital resultados \
-        modelos validar notebooks limpar-intermediario limpar-cache
+        modelos validar notebooks limpar-intermediario limpar-cache \
+        hpc-ambiente hpc-etl hpc-grafos hpc-experimento hpc-matriz hpc-ajuda
 
 # ---------------------------------------------------------------- ambiente
 
 help:  ## Lista os alvos disponíveis
-	@echo "Alvos:"
-	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
+	@echo "Pipeline local (src/) — esta máquina, 9 GB, sem GPU:"
+	@grep -hE '^[a-z0-9][a-zA-Z0-9_-]*:.*?## ' $(firstword $(MAKEFILE_LIST)) \
+		| grep -v '^hpc-' \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-24s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Pipeline do servidor (hpc/) — NÃO rodar aqui; delega para hpc/Makefile:"
+	@grep -hE '^hpc-[a-zA-Z0-9_-]*:.*?## ' $(firstword $(MAKEFILE_LIST)) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Variáveis (sobrescreva na linha de comando):"
 	@echo "  RECORTE=$(RECORTE)      prefixo IBGE do recorte espacial"
@@ -53,10 +73,13 @@ help:  ## Lista os alvos disponíveis
 	@echo "  PERIODOS=           competências do ETL; vazio = série canônica"
 	@echo "  EPOCAS=$(EPOCAS)        máximo de épocas no treino"
 	@echo ""
+	@echo "  MODO=$(MODO)      modo do pipeline do servidor"
+	@echo ""
 	@echo "Exemplos:"
 	@echo "  make etl-periodo PERIODOS=202601"
 	@echo "  make experimento RECORTE=355030"
 	@echo "  make reprocessar-tabelas TABELAS=tbEstabelecimento PERIODO=202601"
+	@echo "  make hpc-experimento RECORTE= MODO=completo      # no servidor"
 
 setup:  ## Cria o .venv, instala o pacote e as extensões compiladas do PyG
 	uv venv --python 3.12
@@ -168,6 +191,30 @@ validar:  ## Recomputa as métricas de um pacote sem GPU e sem data/ (RUN=models
 		problemas = conferir(p); \
 		print('manifesto confere com as previsões') if not problemas else [print(f'  DIVERGE {x}') for x in problemas]; \
 		sys.exit(1 if problemas else 0)"
+
+# ------------------------------------------------- pipeline do servidor (hpc/)
+#
+# Delegação para hpc/Makefile, que é a fonte da verdade dos alvos do servidor.
+# Existem aqui para que `make` mostre os dois pipelines de uma vez — e para que
+# fique explícito qual é qual.
+
+hpc-ajuda:  ## Alvos do pipeline do servidor, com as variáveis dele
+	$(MAKE) -f hpc/Makefile help
+
+hpc-ambiente:  ## Perfil da máquina como o pipeline do servidor a vê (roda em qualquer lugar)
+	$(MAKE) -f hpc/Makefile ambiente
+
+hpc-etl:  ## [servidor] ETL nacional, paralelo por competência
+	$(MAKE) -f hpc/Makefile etl
+
+hpc-grafos:  ## [servidor] Materializa os grafos por transição na camada 05
+	$(MAKE) -f hpc/Makefile grafos RECORTE=$(RECORTE) MODO=$(MODO)
+
+hpc-experimento:  ## [servidor] Uma célula da matriz: RECORTE e MODO escolhem qual
+	$(MAKE) -f hpc/Makefile experimento RECORTE=$(RECORTE) MODO=$(MODO)
+
+hpc-matriz:  ## [servidor] As quatro células de D-34, em série, sob screen
+	$(MAKE) -f hpc/Makefile matriz
 
 # ------------------------------------------------------------------- resto
 

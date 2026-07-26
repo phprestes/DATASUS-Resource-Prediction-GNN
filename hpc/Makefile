@@ -28,6 +28,12 @@ TRILHAS ?= todas
 PERMITIR_CPU ?=
 FLAG_CPU := $(if $(PERMITIR_CPU),--permitir-cpu,)
 
+# Ignora a guarda de RAM de 64 GB. Existe porque a guarda é deliberada: rodar
+# este pipeline numa estação de trabalho de 9 GB já travou a sessão do usuário
+# uma vez. Não use com dado real fora do servidor.
+PERMITIR_PEQUENA ?=
+FLAG_PEQUENA := $(if $(PERMITIR_PEQUENA),--permitir-maquina-pequena,)
+
 # Raiz de dados do servidor. Fora do repositório, obrigatoriamente.
 IC_HPC_DATA ?= /var/fasttmp/$(USER)/ic
 export IC_HPC_DATA
@@ -47,6 +53,8 @@ help:  ## Lista os alvos do pipeline do servidor
 	@echo "  MODO=$(MODO)          compativel | completo"
 	@echo "  EPOCAS=$(EPOCAS)             máximo de épocas"
 	@echo "  IC_HPC_DATA=$(IC_HPC_DATA)"
+	@echo "  PERMITIR_CPU=       aceita CPU; o número deixa de ser comparável"
+	@echo "  PERMITIR_PEQUENA=   ignora a guarda de 64 GB de RAM (não use com dado real)"
 	@echo ""
 	@echo "Rode sob screen: o cluster mata processo acima de 168 h."
 
@@ -60,12 +68,13 @@ etl-de-zips:  ## Idem, partindo de ZIPs já enviados por rsync (sem baixar nada)
 	$(PY) -m hpc.etl.pipeline --pular-download --periodos $(PERIODOS)
 
 grafos:  ## Materializa os tensores de grafo por transição em 05_grafos
-	$(PY) -m hpc.etl.grafo_store --recorte "$(RECORTE)" $(FLAG_CPU)
+	$(PY) -m hpc.etl.grafo_store --recorte "$(RECORTE)" --modo $(MODO) \
+		$(FLAG_CPU) $(FLAG_PEQUENA)
 
 experimento:  ## Roda as trilhas no escopo e modo pedidos, salvando em models/
 	@echo "recorte '$(RECORTE)' | modo $(MODO) | épocas $(EPOCAS)"
 	$(PY) -m hpc.ml.experimento --recorte "$(RECORTE)" --modo $(MODO) \
-		--epocas $(EPOCAS) --trilhas $(TRILHAS) $(FLAG_CPU)
+		--epocas $(EPOCAS) --trilhas $(TRILHAS) $(FLAG_CPU) $(FLAG_PEQUENA)
 
 matriz:  ## As quatro células de D-34: técnica × escopo, uma após a outra
 	@echo "Quatro execuções em série. Rode sob screen."
@@ -74,7 +83,10 @@ matriz:  ## As quatro células de D-34: técnica × escopo, uma após a outra
 	$(MAKE) -f hpc/Makefile experimento RECORTE=35 MODO=completo
 	$(MAKE) -f hpc/Makefile experimento RECORTE=   MODO=completo
 
-smoke:  ## Caminho completo no recorte da capital, em CPU, para depurar fora do servidor
+smoke:  ## Caminho completo no recorte da capital, em CPU (exige >= 64 GB de RAM)
+	@echo "A guarda de RAM vai recusar em máquina pequena, e isso é intencional:"
+	@echo "este caminho toca a camada primária inteira. Para exercitar a lógica sem"
+	@echo "dado real, rode os testes sintéticos: pytest tests/test_hpc_*.py -q"
 	$(MAKE) -f hpc/Makefile experimento RECORTE=355030 MODO=completo \
 		EPOCAS=3 PERMITIR_CPU=1
 
