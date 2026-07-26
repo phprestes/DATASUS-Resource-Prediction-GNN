@@ -1,299 +1,281 @@
-# CNES — escassez de recursos em redes de saúde
+# 🏥 Escassez de Recursos em Redes de Saúde: a Estrutura Importa? (Iniciação Científica)
 
-Projeto de Iniciação Científica sobre microdados do **CNES** (Cadastro Nacional de
-Estabelecimentos de Saúde, DATASUS). Mede se a **estrutura** de uma rede de saúde
-— quem está perto de quem, quem compartilha o quê — carrega informação sobre onde
-recursos serão adquiridos, além do que os atributos isolados de cada
-estabelecimento explicam.
+![Python](https://img.shields.io/badge/Python%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
+![PyG](https://img.shields.io/badge/PyTorch%20Geometric-3C2179?style=for-the-badge&logo=pytorch&logoColor=white)
+![RelBench](https://img.shields.io/badge/RelBench-1B3A57?style=for-the-badge&logo=databricks&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white)
+![Arrow](https://img.shields.io/badge/Apache%20Arrow-1A1A1A?style=for-the-badge&logo=apachearrow&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-%23F7931E.svg?style=for-the-badge&logo=scikit-learn&logoColor=white)
+![Jupyter](https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=jupyter&logoColor=white)
+![uv](https://img.shields.io/badge/uv-DE5C2E?style=for-the-badge&logo=uv&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest%2067%20testes-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 
-Três trilhas veem o mesmo rótulo com informação estrutural diferente: **nenhuma**
-(baselines tabulares), **relacional** (grafo do schema CNES) e **geográfica**
-(vizinhança física), sob a mesma partição temporal e o mesmo subconjunto de nós. A
-contribuição é a diferença medida entre elas; a rede neural de grafos é instrumento
-de medição.
+Bem-vindo ao repositório da Iniciação Científica sobre os microdados do **CNES**
+(Cadastro Nacional de Estabelecimentos de Saúde, DATASUS). O projeto combina
+**Engenharia de Dados** (ETL em quatro camadas sobre dez anos de cadastro) com
+**Aprendizado Profundo Relacional e Geográfico** (RelBench e PyTorch Geometric) para
+medir uma coisa só: se a **estrutura** de uma rede de saúde carrega informação sobre
+onde recursos serão adquiridos.
 
-**Pedro H. S. Prestes** · orientação: Alexandre C. B. Delbem, Eric K. Tokuda
+**Pedro H. S. Prestes** · orientação: Alexandre C. B. Delbem e Eric K. Tokuda
 
-> O argumento científico — pergunta, hipótese, metodologia, resultados e conclusão
-> em formato de artigo — está em
-> [`docs/05-esboco-artigo.md`](docs/05-esboco-artigo.md). Este README descreve o
-> repositório.
+---
 
-## Sumário
+## 📖 A Grande Ideia: um hospital sem tomógrafo é sempre o mesmo hospital?
 
-- [Resultado atual](#resultado-atual)
-- [Stack](#stack)
-- [Estrutura do projeto](#estrutura-do-projeto)
-- [Arquitetura](#arquitetura)
-- [Como rodar](#como-rodar)
-- [Testes](#testes)
-- [Documentação](#documentação)
-- [Licença e dados](#licença-e-dados)
+> Dado o estado observável da rede de saúde, é possível identificar onde faltam
+> recursos assistenciais — e antecipar onde essa falta será suprida no período
+> seguinte?
 
-## Resultado atual
+Um hospital sem tomógrafo cercado de hospitais **com** tomógrafo é um caso
+qualitativamente diferente de um hospital sem tomógrafo isolado a 40 km do próximo
+serviço. Nenhum modelo que trate estabelecimentos como linhas independentes de uma
+tabela distingue os dois — e verificar se essa distinção tem efeito mensurável é o
+objeto do trabalho.
 
-Recorte estadual (São Paulo), transição de teste 2026, tabela **pareada** sobre os
+A contribuição **não** é a rede neural de grafos: é a **diferença medida entre três
+abordagens** que enxergam o mesmo rótulo com informação estrutural diferente. A GNN é
+instrumento de medição, o que tem uma consequência incomum e deliberada — **resultado
+negativo é publicável**.
+
+Cinco notebooks sequenciais conduzem a investigação:
+
+1. **[00_analise_alvo.ipynb](notebook/00_analise_alvo.ipynb)** — o **gate empírico**.
+   Ponto de decisão bloqueante: qual tabela é o melhor alvo, se as chaves de linha são
+   únicas, se a densidade anual basta, se a trilha geográfica é viável e quais colunas
+   o filtro empírico rejeita. Cinco vereditos escritos, todos fechados.
+2. **[01_perfil_dados.ipynb](notebook/01_perfil_dados.ipynb)** — perfil da camada
+   primária: nulos, cardinalidade e distribuição das 393 colunas aprovadas.
+3. **[02_relacoes.ipynb](notebook/02_relacoes.ipynb)** — o grafo do schema CNES,
+   derivado do parser e não de uma lista escrita à mão.
+4. **[03_modelagem.ipynb](notebook/03_modelagem.ipynb)** — as três trilhas sobre a
+   mesma tabela de rótulos e a mesma partição temporal.
+5. **[04_recorte_e_dados_externos.ipynb](notebook/04_recorte_e_dados_externos.ipynb)**
+   — efeito do recorte espacial e pré-requisitos para admitir fonte externa.
+
+---
+
+## 🔬 Metodologia de Ciência de Dados
+
+**A tarefa.** Classificação binária de **aquisição** sobre o grafo bipartido
+estabelecimento × tipo de equipamento: dado que a unidade `u` não tem equipamento do
+tipo `k` em `t`, ela passa a ter em `t+1`? É predição de aresta futura — o regime em
+que uma GNN tem vantagem estrutural sobre um modelo tabular, o que faz a comparação
+medir algo. Regime de desbalanceamento extremo: **86,7 milhões de pares candidatos
+para 40.880 eventos**, prevalência de 0,047%.
+
+**As três trilhas.** Mesmo rótulo, mesma partição, mesmo subconjunto de nós na
+avaliação. Só a informação estrutural muda:
+
+| Trilha | Entrada | O que isola |
+| :--- | :--- | :--- |
+| **1 — Baselines tabulares** | atributos achatados por estabelecimento, sem relações | quanto do fenômeno se explica sem estrutura nenhuma |
+| **2 — GNN relacional** | grafo do schema CNES: 25 tipos de nó, 48 relações | ganho da estrutura relacional |
+| **3 — GNN geográfica** | estabelecimentos e proximidade física (kNN, k=10) | ganho da vizinhança física, sem o schema |
+
+O **decoder é idêntico** nas trilhas 2 e 3 — ambas produzem um embedding por
+estabelecimento e o combinam com um embedding aprendido do tipo de equipamento. Só o
+encoder difere, senão a diferença de resultado poderia vir do decoder. E a trilha 1
+fica deliberadamente livre de agregado de vizinhança: incluí-lo a transformaria numa
+versão pobre da trilha 2.
+
+**A partição é temporal, por transição, e nunca sorteada.** A transição mais recente
+testa, as duas anteriores validam, o resto treina — derivado da série, não configurado:
+
+| Conjunto | Transições |
+| :--- | :--- |
+| Treino | 2018, 2019, 2020, 2021, 2022, 2023 |
+| Validação | 2024, 2025 |
+| Teste | 2026 |
+
+**As métricas, e o piso que as valida.** MAP@10 por estabelecimento é a métrica de
+destaque, porque responde à pergunta que o trabalho faz — quais equipamentos esta
+unidade provavelmente deveria ter. AP é a métrica global, interpretável contra a
+prevalência. E a baseline de **persistência devolve AP exatamente igual à prevalência
+e AUC exatamente 0,500**: qualquer desvio denuncia erro no arcabouço de avaliação, e
+não no modelo.
+
+### 📚 Fontes e documentação de referência
+
+| Fonte | Relação com o projeto | Acesso |
+| :--- | :--- | :--- |
+| **Microdados do CNES** — ZIPs de competência do banco de produção federal | Fonte única do estudo. TABNET e API ElasticCNES foram descartados: entregam dado agregado, e a integridade relacional necessária ao grafo só existe no bruto | [cnes.datasus.gov.br](https://cnes.datasus.gov.br/) |
+| **Dicionário de Dados do CNES (2025)** | Descreve o banco **Oracle**, não o CSV distribuído; onde os dois discordam, vale o CSV | [`docs/DICIONARIO_DE_DADOS.pdf`](docs/DICIONARIO_DE_DADOS.pdf) |
+| **RelBench / PyTorch Geometric** | Base da trilha 2: tarefa preditiva formulada direto sobre o schema relacional, sem achatar as 44 tabelas numa matriz | [relbench.stanford.edu](https://relbench.stanford.edu/) |
+| **Esboço do artigo** | Onde o argumento científico e a bibliografia estão sendo montados; a seção de trabalhos relacionados é a lacuna declarada | [`docs/05-esboco-artigo.md`](docs/05-esboco-artigo.md) |
+
+---
+
+## ⚙️ Engenharia de Dados (Pipeline ETL)
+
+O ETL opera em **quatro camadas**, uma competência por vez, descartando o
+intermediário ao fim de cada uma — o pico de disco fica em uma competência em vez da
+série inteira, e a execução é retomável.
+
+1. **Bruta (`01_raw`)** — `BASE_DE_DADOS_CNES_{YYYYMM}.ZIP`, dez competências, ~3,6 GB.
+2. **Intermediária (`02_intermediate`)** — um DuckDB por competência, tudo `VARCHAR`.
+   Descartável por construção.
+3. **Primária (`03_primary`)** — `{YYYYMM}/{tabela}.parquet`, tipado e comprimido,
+   ~2,7 GB. É a camada que se guarda.
+4. **Derivada (`04_feature`)** — eventos de mudança entre snapshots consecutivos, que
+   são a origem dos rótulos.
+
+**O ponto de projeto que organiza o resto.** O arquivo
+[`docs/01-selecao-tabelas.md`](docs/01-selecao-tabelas.md) é a **fonte da verdade do
+schema**: [`src/schema.py`](src/schema.py) o lê em tempo de import e dele derivam as
+tabelas ingeridas, as colunas materializadas, os tipos de destino e as chaves.
+**Editar aquele Markdown muda o pipeline** — não existe segunda lista em código para
+manter em sincronia, e a divergência entre duas listas paralelas foi exatamente o bug
+que a refatoração eliminou.
+
+**O tempo é a parte sutil.** Um ZIP de competência é fotografia do estado atual, não
+log de eventos, e guarda apenas a última data de atualização de cada linha. Logo: a
+coluna de atualização é **censurada à direita**, alteração entre dois snapshots é
+**irrecuperável**, e a resolução temporal real do estudo é o **espaçamento entre
+snapshots**. Daí a unidade de análise ser a **transição** `t → t+1`, e o eixo temporal
+do grafo ser a data do snapshot, que é exata e uniforme.
+
+### Diagramas do pipeline e do schema
+
+As figuras do artigo — arquitetura do pipeline, as três trilhas diante do mesmo
+rótulo, recorte do grafo relacional e as visualizações de dado — moram em
+[`docs/figuras/`](docs/figuras/), com convenção de nome, formato e procedência
+documentada em [`docs/figuras/README.md`](docs/figuras/README.md). O grafo do schema é
+gerado por [`notebook/02_relacoes.ipynb`](notebook/02_relacoes.ipynb) a partir do
+parser, e não de uma lista mantida à mão.
+
+---
+
+## 📊 Resultados
+
+Recorte estadual (São Paulo), transição de teste 2026, comparação **pareada** sobre os
 127.868 estabelecimentos posicionáveis — 11.411.933 exemplos, 6.309 positivos,
 prevalência 0,0553%:
 
 | Modelo | Trilha | AP | AUC-ROC | MAP@10 |
-|---|---|---|---|---|
-| `gnn_relacional` | 2 | **0,01061** | **0,849** | **0,3000** |
+| :--- | :---: | ---: | ---: | ---: |
+| **`gnn_relacional`** | 2 | **0,01061** | **0,849** | **0,3000** |
 | `gnn_geografica` | 3 | 0,00490 | 0,816 | 0,2745 |
 | `gbdt_geral` | 1 | 0,00355 | 0,766 | 0,2567 |
 | `popularidade_item` | 1 | 0,00220 | 0,700 | 0,2714 |
 | `persistencia` | 1 | 0,00055 | 0,500 | 0,0324 |
 
-A GNN relacional lidera as duas métricas, com 19,2 vezes a prevalência em AP contra
-6,4 do gradient boosting tabular. **A atribuição não é limpa:** três mudanças
-entraram entre esta execução e a anterior, e o ablation que as separa está pendente
-— leia D-32 antes de citar o número.
+- **A estrutura acrescenta.** A GNN relacional dá **19,2 vezes a prevalência** em AP,
+  contra 6,4 do gradient boosting tabular.
+- **E acrescenta na métrica de destaque.** MAP@10 de 0,300 contra 0,271 do modelo que
+  só conhece a popularidade de cada tipo de equipamento e ignora o estabelecimento. Na
+  execução anterior essa comparação era o contrário.
+- **Relacional supera geográfica.** 0,0106 contra 0,0049 em AP, a um custo de treino
+  dez vezes maior — 1.668 s contra 160 s.
+- **Ressalva honesta.** Três mudanças entraram entre esta execução e a anterior
+  (partição, correção do grafo e treino mais longo) e o **ablation que as separa está
+  pendente**. Leia D-32 antes de citar o número.
 
-`persistencia` devolve AP exatamente igual à prevalência e AUC exatamente 0,500. É o
-piso verificável do arcabouço: se um dia divergir, o erro está na avaliação e não no
-modelo.
+Resultados brutos em [`docs/resultados/`](docs/resultados/); `make resultados` imprime
+a tabela do mais recente.
 
-Interpretação completa em [`docs/05-esboco-artigo.md`](docs/05-esboco-artigo.md) e
-em D-32 de [`docs/03-decisoes.md`](docs/03-decisoes.md). Resultados brutos em
-[`docs/resultados/`](docs/resultados/); `make resultados` imprime o mais recente.
+---
 
-## Stack
+## 🛠️ Como Executar (O Makefile)
 
-Python 3.12 em `.venv`, gerenciado por **uv**.
-
-| Camada | Ferramenta | Papel |
-|---|---|---|
-| ETL | `requests`, `duckdb` 1.5.2 | download e ingestão dos ZIPs de competência |
-| Armazenamento | `pyarrow` 23.0.1 (Parquet) | camada primária tipada e comprimida |
-| Manipulação | `pandas` 3.0.2 | tabelas de tarefa e features |
-| Modelagem clássica | `scikit-learn` 1.6.1 | `HistGradientBoosting`, métricas |
-| Grafos | `relbench` 2.1.1, `torch-geometric` 2.7.0 | `Database` relacional e camadas GNN |
-| Deep learning | `torch` 2.9.1 | treino |
-| Análise | `matplotlib`, `seaborn`, `networkx`, `jupyter` | notebooks |
-| Testes | `pytest` 9.0.2 | 67 testes |
-
-`pyg-lib`, `torch-scatter` e `torch-sparse` não existem no PyPI e exigem o índice de
-wheels casado com a versão do torch — `make setup` resolve, e o cabeçalho de
-[`requirements.txt`](requirements.txt) documenta.
-
-## Estrutura do projeto
-
-```
-Makefile                     atalhos documentados; `make` lista tudo
-
-docs/                        o contrato do projeto — o código é downstream daqui
-  01-selecao-tabelas.md      FONTE DA VERDADE do schema; schema.py a lê no import
-  02-metodologia.md          desenho experimental detalhado
-  03-decisoes.md             32 decisões numeradas, com evidência e o rejeitado
-  04-dados-externos.md       critério de admissão para fontes do SUS e do IBGE
-  05-esboco-artigo.md        estrutura do artigo e o que falta escrever
-  resultados/                JSON de cada execução das trilhas
-  DICIONARIO_DE_DADOS.pdf    dicionário do DATASUS (descreve o Oracle, não o CSV)
-
-src/
-  paths.py                   localização das camadas de dados
-  schema.py                  parser estrito de 01-selecao-tabelas.md
-  extract.py                 estágio 1 — download dos ZIPs
-  to_sql.py                  estágio 2 — CSV para DuckDB
-  to_parquet.py              estágio 3 — DuckDB para Parquet tipado
-  pipeline.py                orquestra o ETL competência por competência
-  changes.py                 diff entre snapshots, eventos de mudança
-  splits.py                  a partição temporal única
-  tasks.py                   tabelas de rótulo: aquisição e quantidade
-  baselines.py               trilha 1
-  graph.py                   trilhas 2 e 3 — Database e grafo geográfico
-  gnn.py                     encoders, decoder compartilhado, laço de treino
-  metrics.py                 AP, AUC, MAP@k, RMSE/MAE
-
-notebook/
-  00_analise_alvo            gate empírico — bloqueante, cinco vereditos fechados
-  01_perfil_dados            perfil da camada primária
-  02_relacoes                grafo do schema, derivado de schema.py
-  03_modelagem               as três trilhas na mesma tabela
-  04_recorte_e_dados_externos  recorte espacial e pré-requisitos do IBGE
-
-tests/                       67 testes
-tools/                       roda_experimento.py e o migrador de procedência
-archieved/                   código pré-refatoração, API RelBench morta
-data/                        nada versionado; reprodutível do estágio 1
-```
-
-## Arquitetura
-
-### Camadas de dados
-
-```
-data/01_raw          BASE_DE_DADOS_CNES_{YYYYMM}.ZIP        ~3,6 GB
-data/02_intermediate sql_cnes_{YYYYMM}.duckdb               descartável
-data/03_primary      {YYYYMM}/{tabela}.parquet              ~2,7 GB
-data/04_feature      changes/{tabela}/{periodo}.parquet     eventos de mudança
-```
-
-Cada estágio lê a camada anterior e escreve a seguinte. A competência `YYYYMM` é a
-chave de partição em toda parte. A amostra canônica são dez snapshots anuais de
-janeiro, 01/2017 a 01/2026 — nove transições.
-
-### O ponto de projeto que organiza o resto
-
-[`docs/01-selecao-tabelas.md`](docs/01-selecao-tabelas.md) é lido por
-[`src/schema.py`](src/schema.py) em tempo de import, e dele derivam `FACT_TABLES`,
-`CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`,
-`CNES_NATURAL_KEY` e `CNES_FKEY`.
-
-**Editar aquele Markdown muda o pipeline.** Não existe segunda lista em código para
-manter em sincronia — a divergência entre duas listas paralelas foi o bug que a
-refatoração eliminou (D-05). Admitir uma coluna nova exige regerar a camada
-primária: `make reprocessar-tabelas` faz isso só nas tabelas afetadas.
-
-### O tempo é a parte sutil
-
-Um ZIP de competência é **fotografia do estado atual**, não log de eventos, e guarda
-apenas a **última** data de atualização de cada linha. Portanto:
-
-- A coluna de atualização é **censurada à direita**; usá-la como eixo temporal
-  atribui a cada linha um instante que depende de quando o snapshot foi tirado.
-- Alteração entre dois snapshots é **irrecuperável**.
-- A resolução temporal real é o **espaçamento entre snapshots**, não a granularidade
-  diária da coluna de data.
-
-Daí a unidade de análise ser a **transição** `t → t+1`
-([`src/changes.py`](src/changes.py)), e o eixo temporal do grafo ser a data do
-snapshot, exata e uniforme. Eventos dão os rótulos; snapshots dão o estado (D-08).
-
-### Comparabilidade é o que o desenho protege
-
-As três trilhas consomem a mesma `TabelaTarefa`, a mesma `ParticaoTemporal` e
-devolvem o mesmo tipo `Previsao`, de modo que [`src/metrics.py`](src/metrics.py)
-coloca tudo numa tabela só. Duas regras que não se negociam:
-
-- **Nunca reportar número de GNN sem a baseline de persistência ao lado** (D-11).
-- **A trilha 1 fica livre de feature relacional ou espacial.** Agregado de
-  vizinhança nas baselines apagaria a diferença que o experimento existe para medir.
-
-### Restrição de hardware que moldou o código
-
-A máquina de referência tem 9 GB de RAM. A tabela de tarefa no recorte estadual
-custava 3,2 GB e derrubou o ambiente; foi reduzida a 0,32 GB com codificação
-categórica compartilhada e Arrow com dicionário (D-23). O experimento completo pica
-em 6,3 GB, e por isso `make experimento` roda dentro de um cgroup com teto: se
-estourar, morre o experimento e não a sessão do usuário.
-
-Código novo que toque a tabela de tarefa não deve materializar `co_unidade` como
-string nem copiar o frame inteiro — use `TabelaTarefa.codigos()` e
-`Previsao.mascara_de_entidades()`.
-
-## Como rodar
-
-Tudo passa pelo Makefile. `make` sem argumento lista os alvos, as variáveis e
-exemplos de uso:
+Qualquer passo do projeto é abstraído pelo `Makefile` na raiz. Digite `make` (ou
+`make help`) para a lista autodocumentada:
 
 ```bash
-make
+# Ambiente
+make setup                                   # .venv, pacote editável e extensões do PyG
+
+# Pipeline de dados
+make etl                                     # ETL completo da série canônica
+make etl-periodo PERIODOS=202601             # só uma competência
+make mudancas                                # recalcula os eventos de mudança
+make reprocessar-tabelas TABELAS=tbEstabelecimento PERIODO=202601
+
+# Experimento
+make experimento                             # as três trilhas (~55 min, teto de memória)
+make experimento-baselines                   # só a trilha 1 (~15 min)
+make experimento-capital                     # recorte da capital, barato para depuração
+make resultados                              # tabela pareada do resultado mais recente
+
+# Qualidade e limpeza
+make testes                                  # 67 testes
+make verificar                               # testes + resumo do schema derivado do doc
+make limpar-intermediario                    # apaga a camada 02, que é descartável
 ```
 
-| Alvo | O que faz |
-|---|---|
-| `make setup` | cria o `.venv`, instala o pacote e as extensões do PyG |
-| `make etl` | ETL completo da série canônica (horas, ~3,6 GB de download) |
-| `make etl-periodo PERIODOS=202601` | ETL de competências específicas |
-| `make mudancas` | recalcula os eventos de mudança entre snapshots |
-| `make reprocessar-tabelas TABELAS=… PERIODO=…` | regera só as tabelas afetadas por uma coluna nova |
-| `make testes` | suíte completa |
-| `make verificar` | testes mais o resumo do schema derivado do doc |
-| `make experimento` | as três trilhas, com teto de memória (~55 min) |
-| `make experimento-baselines` | só a trilha 1 (~15 min) |
-| `make experimento-capital` | as três trilhas na capital, barato para depuração |
-| `make resultados` | imprime a tabela pareada do resultado mais recente |
-| `make notebooks` | abre o Jupyter Lab |
-| `make limpar-intermediario` | apaga a camada 02, que é descartável |
+*(O recorte espacial é a variável `RECORTE`, um prefixo de código IBGE: `make
+experimento RECORTE=355030` roda só a capital. O teto de memória é `MEM`, e existe
+porque o experimento estadual pica em 6,3 GB numa máquina de 9 GB — `make experimento`
+roda dentro de um cgroup, então um estouro mata o experimento e não a sua sessão.)*
 
-Variáveis sobrescrevíveis: `RECORTE` (prefixo IBGE, padrão `35`), `MEM` (teto de
-memória, padrão `7G`), `EPOCAS`, `PERIODOS`, `TABELAS`, `PERIODO`.
+---
 
-### Primeira execução, do zero
+## 🛡️ Boas Práticas e Qualidade de Código
 
-```bash
-make setup
-make etl                # ou: make etl-periodo PERIODOS="202501 202601"
-make mudancas
-make testes
-make notebooks          # rode 00_analise_alvo antes de qualquer modelagem
-make experimento
+- **Documento como fonte da verdade.** O schema mora em Markdown versionado e é lido
+  no import; o parser é estrito e **quebra o import** em vez de carregar um schema
+  silenciosamente incompleto.
+- **Testes deliberadamente negativos.** Os 67 testes existem para que a partição
+  temporal, o schema e o diff entre snapshots **falhem** em vez de produzir um número
+  bonito e errado. Cada modo de falha coberto já ocorreu neste projeto ao menos uma vez.
+- **Decisões auditáveis.** 32 entradas numeradas em
+  [`docs/03-decisoes.md`](docs/03-decisoes.md), cada uma com a evidência que a motivou
+  e o que foi rejeitado. Quando o código parecer surpreendente, a razão está num `D-nn`.
+- **Gerenciamento moderno de pacotes.** Ecossistema `uv` com `pyproject.toml`, e lock
+  completo em `requirements.txt`.
+- **Reprodutibilidade defensiva.** Todos os estágios do ETL usam `reprocess=False` por
+  padrão: a série tem vários gigabytes e rebaixar por acidente é caro.
+- **Pendência declarada.** Não há CI configurado neste repositório — `make verificar` é
+  hoje o portão manual equivalente.
+
+---
+
+## 📁 Estrutura do Projeto
+
+```text
+📦 IC
+├── 📂 docs/                      # O contrato do projeto — o código é downstream daqui
+│   ├── 01-selecao-tabelas.md     # FONTE DA VERDADE do schema; lida por schema.py
+│   ├── 02-metodologia.md         # desenho experimental detalhado
+│   ├── 03-decisoes.md            # 32 decisões numeradas, com evidência e o rejeitado
+│   ├── 04-dados-externos.md      # teste de admissão para fontes do SUS e do IBGE
+│   ├── 05-esboco-artigo.md       # estrutura do artigo, figuras e pendências
+│   ├── 📂 figuras/               # figuras do artigo, com convenção documentada
+│   ├── 📂 resultados/            # JSON de cada execução das trilhas
+│   └── DICIONARIO_DE_DADOS.pdf   # dicionário do DATASUS (descreve o Oracle)
+├── 📂 src/                       # Pipeline e modelagem
+│   ├── schema.py                 # parser estrito do doc de seleção
+│   ├── extract.py                # estágio 1 — download dos ZIPs
+│   ├── to_sql.py                 # estágio 2 — CSV para DuckDB
+│   ├── to_parquet.py             # estágio 3 — DuckDB para Parquet tipado
+│   ├── pipeline.py               # orquestra o ETL competência por competência
+│   ├── changes.py                # diff entre snapshots, eventos de mudança
+│   ├── splits.py                 # a partição temporal única
+│   ├── tasks.py                  # tabelas de rótulo: aquisição e quantidade
+│   ├── baselines.py              # trilha 1
+│   ├── graph.py                  # trilhas 2 e 3 — Database e grafo geográfico
+│   ├── gnn.py                    # encoders, decoder compartilhado, laço de treino
+│   └── metrics.py                # AP, AUC, MAP@k, RMSE/MAE
+├── 📂 notebook/                  # Investigação e visualização
+│   ├── 00_analise_alvo.ipynb     # gate empírico bloqueante
+│   └── ...                       # perfil, relações, modelagem, recorte
+├── 📂 tests/                     # 67 testes, todos negativos por desenho
+├── 📂 tools/                     # roda_experimento.py e o migrador de procedência
+├── 📂 data/                      # (criado dinamicamente) nada versionado
+│   ├── 01_raw/                   # ZIPs de competência
+│   ├── 02_intermediate/          # DuckDB descartável
+│   ├── 03_primary/               # Parquet tipado
+│   └── 04_feature/               # eventos de mudança
+├── Makefile                      # Automação de tarefas (CLI autodocumentada)
+├── pyproject.toml                # Definições do projeto e dependências (uv)
+└── README.md                     # Você está aqui!
 ```
 
-O ETL é **retomável** e todos os estágios usam `reprocess=False` por padrão: a série
-tem vários gigabytes e rebaixar por acidente é caro.
+---
 
-### Recorte espacial
+## 📄 Licença e dados
 
-Prefixo hierárquico de código IBGE, aceito pelo `make` e pelas funções:
-
-```bash
-make experimento RECORTE=35        # estado de São Paulo (padrão)
-make experimento RECORTE=355030    # município da capital
-```
-
-```python
-graph.montar_db(recorte="35")       # estado
-graph.montar_db(recorte=None)       # país inteiro — exige memória de sobra
-```
-
-### Uso por script
-
-```python
-from src import baselines, changes, graph, gnn, tasks
-from src.splits import particionar
-
-particao = particionar(changes.periodos_disponiveis())
-tarefa = tasks.tarefa_aquisicao(particao, recorte=graph.RECORTE_PADRAO)
-
-# Trilha 1
-previsoes = baselines.rodar_todas(tarefa, particao, conjunto="teste")
-
-# Trilha 2 — atenção ao corte do grafo
-db = graph.montar_db(recorte=graph.RECORTE_PADRAO,
-                     colunas=graph.colunas_minimas_para_grafo())
-unidades = sorted(set(db.table_dict["tbEstabelecimento"].df["co_unidade"].to_pylist()))
-indice = gnn.IndicePares.de(unidades, sorted(tarefa.df["co_equipamento"].cat.categories))
-corte = particao.antes_de_todos_os_rotulos
-features = gnn.features_de_estabelecimento(db, unidades, ate_periodo=corte)
-dados = gnn.grafo_relacional_para_data(db, unidades, features, ate_periodo=corte)
-modelo, historico = gnn.treinar_aquisicao(tarefa, particao, dados, indice)
-```
-
-`ate_periodo` deve ser `antes_de_todos_os_rotulos`, **não** `fim_do_treino`: o
-segundo coloca o rótulo dentro do grafo, e a função recusa a chamada sem o parâmetro
-justamente por isso (D-25).
-
-## Testes
-
-```bash
-make testes          # 67 testes
-make teste-schema    # só o invariante central do schema
-```
-
-Os testes são deliberadamente **negativos**: existem para que a partição temporal, o
-schema e o diff entre snapshots **falhem** em vez de produzir silenciosamente um
-número bonito e errado. Cada modo de falha coberto já ocorreu ao menos uma vez neste
-projeto.
-
-## Documentação
-
-Os cinco documentos de `docs/` são o contrato do projeto — não são resumo do código,
-o código é que é downstream deles.
-
-| Documento | Papel |
-|---|---|
-| [`01-selecao-tabelas.md`](docs/01-selecao-tabelas.md) | fonte da verdade do schema; editar muda o pipeline |
-| [`02-metodologia.md`](docs/02-metodologia.md) | pergunta, definição operacional, trilhas, protocolo |
-| [`03-decisoes.md`](docs/03-decisoes.md) | 32 decisões numeradas, com evidência e o que foi rejeitado |
-| [`04-dados-externos.md`](docs/04-dados-externos.md) | teste de admissão para fonte externa |
-| [`05-esboco-artigo.md`](docs/05-esboco-artigo.md) | estrutura do artigo e checklist de redação |
-
-Quando algo no código parecer surpreendente, a razão costuma estar numa entrada
-`D-nn` de `03-decisoes.md`.
-
-## Licença e dados
-
-Os dados do CNES são públicos, publicados pelo DATASUS. Nada sob `data/` é
-versionado: tudo é reprodutível a partir do estágio 1 do ETL.
+Os dados do CNES são públicos, publicados pelo DATASUS. Nada sob `data/` é versionado:
+tudo é reprodutível a partir do estágio 1 do ETL.
