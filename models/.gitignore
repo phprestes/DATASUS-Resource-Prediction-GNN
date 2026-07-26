@@ -1,0 +1,9 @@
+# Versiona só o manifesto: é ele que torna a execução rastreável e cabe no git.
+# Pesos e previsões ficam de fora — a previsão do recorte nacional passa de meio
+# gigabyte, e nada aqui é fonte da verdade: tudo é reproduzível a partir do commit
+# registrado no manifesto (D-35).
+*
+!.gitignore
+!README.md
+!*/
+!*/manifesto.json

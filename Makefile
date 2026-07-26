@@ -27,6 +27,9 @@ PERIODOS ?=
 TABELAS  ?=
 PERIODO  ?=
 
+# Pacote de modelo a validar. Vazio = o mais recente de models/.
+RUN      ?=
+
 EPOCAS   ?= 150
 
 # Envolve o comando num cgroup com teto de memória, se systemd-run existir.
@@ -35,7 +38,7 @@ LIMITADOR := $(shell command -v systemd-run >/dev/null 2>&1 && echo "systemd-run
 .DEFAULT_GOAL := help
 .PHONY: help setup etl etl-periodo mudancas reprocessar-tabelas testes teste-schema \
         verificar experimento experimento-baselines experimento-capital resultados \
-        notebooks limpar-intermediario limpar-cache
+        modelos validar notebooks limpar-intermediario limpar-cache
 
 # ---------------------------------------------------------------- ambiente
 
@@ -136,6 +139,35 @@ resultados:  ## Mostra a tabela pareada do resultado mais recente
 		print(f\"{arquivos[-1].name}  |  teste {d['particao']['teste']}\") if arquivos else None; \
 		[print(f\"{n:20s} AP {m['average_precision']:.5f}  AUC {m['auc_roc']:.3f}  MAP@10 {m['map@10']:.4f}\") \
 		 for n, m in sorted(d.get('teste_pareado', {}).items(), key=lambda x: -x[1]['average_precision'])]"
+
+# --------------------------------------------------------------- artefatos
+
+modelos:  ## Lista os pacotes de modelo em models/, do mais recente ao mais antigo
+	@$(PY) -c "from src.ml.artefatos import listar_execucoes; \
+		pacotes = listar_execucoes(); \
+		print('nenhum pacote em models/ — rode make experimento') if not pacotes else None; \
+		[print(f\"{p.nome:52s} {p.manifesto.get('modo','?'):11s} \" \
+		       f\"{'com pesos' if p.manifesto.get('modelo_salvo') else 'sem pesos'}\") \
+		 for p in pacotes]"
+
+validar:  ## Recomputa as métricas de um pacote sem GPU e sem data/ (RUN=models/...)
+	@echo "Confere o manifesto contra as previsões salvas. É o que permite validar"
+	@echo "em qualquer máquina um modelo treinado no servidor (D-35)."
+	@$(PY) -c "import sys; \
+		from src.ml.artefatos import carregar_execucao, conferir, listar_execucoes, recomputar_metricas; \
+		alvo = '$(RUN)'; \
+		pacotes = listar_execucoes(); \
+		p = carregar_execucao(alvo) if alvo else (pacotes[0] if pacotes else None); \
+		sys.exit('nenhum pacote em models/ — rode make experimento') if p is None else None; \
+		print(f'pacote: {p.nome}'); \
+		print(f\"escopo {p.manifesto.get('escopo')} | modo {p.manifesto.get('modo')} | \" \
+		      f\"commit {p.manifesto.get('procedencia',{}).get('commit')}\"); \
+		m = recomputar_metricas(p)['teste_completo']; \
+		print(f\"recomputado: AP {m['average_precision']:.5f}  AUC {m['auc_roc']:.3f}  \" \
+		      f\"MAP@10 {m['map@10']:.4f}  prevalência {100*m['prevalencia']:.4f}%\"); \
+		problemas = conferir(p); \
+		print('manifesto confere com as previsões') if not problemas else [print(f'  DIVERGE {x}') for x in problemas]; \
+		sys.exit(1 if problemas else 0)"
 
 # ------------------------------------------------------------------- resto
 

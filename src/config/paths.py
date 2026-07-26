@@ -33,3 +33,9 @@ DOCS_DIR = BASE_DIR / "docs"
 
 # Fonte da verdade do schema, lida por src/config/schema.py.
 SELECAO_TABELAS = DOCS_DIR / "01-selecao-tabelas.md"
+
+# Modelos treinados, um diretório por execução, no formato de src/ml/artefatos.py.
+# Fica fora de data/ de propósito: é resultado que se guarda, não camada
+# reprodutível a partir do ETL. Os dois pipelines — o desta máquina e o do
+# servidor — escrevem aqui, e é o que permite validar em qualquer lugar (D-35).
+MODELS_DIR = BASE_DIR / "models"

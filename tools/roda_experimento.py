@@ -28,7 +28,7 @@ import pandas as pd
 
 from src.config.paths import DOCS_DIR
 from src.etl import changes
-from src.ml import baselines, gnn, graph, metrics, tasks
+from src.ml import artefatos, baselines, gnn, graph, metrics, tasks
 from src.ml.splits import particionar
 
 PASTA_RESULTADOS = DOCS_DIR / "resultados"
@@ -120,8 +120,23 @@ def main() -> int:
         f"({100 * len(posicionaveis) / len(unidades):.1f}%)")
     gc.collect()
 
-    def avaliar(previsao, nome: str) -> None:
-        """Mede nas duas visões e descarta — reter previsões custa centenas de MB."""
+    itens_do_teste = tarefa.por_conjunto("teste")[tarefa.col_item]
+
+    def avaliar(
+        previsao,
+        nome: str,
+        modelo=None,
+        curva=None,
+        indice_do_modelo: "gnn.IndicePares | None" = None,
+    ) -> None:
+        """
+        Mede nas duas visões e **salva o pacote da execução** em `models/`.
+
+        A versão anterior media e descartava, o que tornava impossível refazer uma
+        curva de precisão–revocação ou reavaliar sem repetir o treino. Agora o
+        escore por exemplo vai para o disco junto com a métrica, o índice e — nas
+        trilhas com treino — os pesos. Ver D-35.
+        """
         resultados.setdefault("teste_completo", {})[nome] = (
             metrics.avaliar_classificacao(
                 previsao.y, previsao.escore, previsao.entidades, k=10
@@ -139,6 +154,48 @@ def main() -> int:
         log(f"{nome}: AP={completo['average_precision']:.5f} "
             f"MAP@10={completo['map@10']:.4f} | pareada "
             f"AP={pareado['average_precision']:.5f} MAP@10={pareado['map@10']:.4f}")
+        salvar()
+
+        # `modo="compativel"` porque este é o pipeline com as limitações da
+        # máquina de 9 GB: grafo estático, projeção mínima, negativos 200:1 e um
+        # passo de gradiente por época. É a célula A da matriz de D-34.
+        # O índice tem de ser o do modelo, não o do experimento: a trilha 3 só
+        # alcança os posicionáveis e portanto tem outra ordem de `unidades`.
+        # Salvar a ordem errada dá um pacote que carrega sem erro e pontua lixo.
+        do_modelo = indice_do_modelo or indice
+        pacote = artefatos.salvar_execucao(
+            nome,
+            previsao,
+            {"teste_completo": completo, "teste_pareado": pareado},
+            escopo=args.recorte,
+            modo="compativel",
+            modelo=modelo,
+            unidades=do_modelo.unidades if modelo is not None else None,
+            itens_indice=do_modelo.itens if modelo is not None else None,
+            itens_por_exemplo=itens_do_teste,
+            historico=curva,
+            particao=particao,
+            hiperparametros={
+                "epocas": args.epocas,
+                "paciencia": args.paciencia,
+                "k_vizinhos": args.k_vizinhos,
+                "negativos_por_positivo": 200,
+                "semente": gnn.SEMENTE,
+            },
+            extra={
+                "pipeline": "src (máquina local)",
+                "limitacoes": [
+                    "grafo estático cortado em " + corte_grafo,
+                    "projeção mínima: duas colunas por tabela filha",
+                    "negativos de treino subamostrados 200:1",
+                    "um passo de gradiente por época",
+                ],
+            },
+        )
+        resultados.setdefault("pacotes", {})[nome] = str(
+            pacote.relative_to(pacote.parents[1])
+        )
+        log(f"{nome}: pacote em {pacote}")
         salvar()
 
     # -------------------------------------------------------------- trilha 1
@@ -186,6 +243,9 @@ def main() -> int:
         gnn.prever_aquisicao(modelo, tarefa, dados_rel, indice, "teste",
                              "gnn_relacional"),
         "gnn_relacional",
+        modelo=modelo,
+        curva=historico["historico"],
+        indice_do_modelo=indice,
     )
     del dados_rel, modelo
     gc.collect()
@@ -220,6 +280,9 @@ def main() -> int:
         gnn.prever_aquisicao(modelo, tarefa, dados_geo, indice_geo, "teste",
                              "gnn_geografica"),
         "gnn_geografica",
+        modelo=modelo,
+        curva=historico["historico"],
+        indice_do_modelo=indice_geo,
     )
 
     resultados["ambiente"] = {"pico_rss_gb": round(rss_gb(), 2)}
