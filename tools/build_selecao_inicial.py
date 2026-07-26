@@ -13,7 +13,7 @@ juntando as três fontes que hoje carregam a seleção de tabelas em paralelo.
                                       % valores únicos, moda).
 
 Depois de rodar este script uma vez, docs/01-selecao-tabelas.md passa a ser a
-fonte da verdade, mantida à mão e lida por src/schema.py. O script fica no
+fonte da verdade, mantida à mão e lida por src/config/schema.py. O script fica no
 repositório apenas como registro de procedência: ele documenta de onde veio
 cada linha da primeira versão do doc, e não é parte do pipeline.
 
@@ -490,7 +490,7 @@ def montar(ref_git: str = "HEAD") -> tuple[list[TabelaDoc], dict[str, int]]:
 CABECALHO = """# Seleção de tabelas e colunas do CNES
 
 Este arquivo é a **fonte da verdade** do schema usado pelo projeto. É lido em
-tempo de import por [`src/schema.py`](../src/schema.py), que dele deriva
+tempo de import por [`src/config/schema.py`](../src/config/schema.py), que dele deriva
 `FACT_TABLES`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY` e `CNES_FKEY`.
 Editar este arquivo muda o pipeline; não existe uma segunda lista em código
 para manter em sincronia.
@@ -552,7 +552,7 @@ deformações são recorrentes:
 ## Legenda das colunas
 
 - **dtype** — tipo de destino aplicado na conversão para Parquet por
-  `src/to_parquet.py`. `datetime64[ns]` dispara `try_strptime` com máscara
+  `src/etl/to_parquet.py`. `datetime64[ns]` dispara `try_strptime` com máscara
   `%d/%m/%Y` e anula datas anteriores a 1900-01-01, sentinela do CNES.
 - **pkey** / **fkey_para** — o grafo relacional entregue ao RelBench.
 - **nulos** — percentual de nulos medido, por snapshot, na ordem

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from src.extract import ANO_FINAL, ANO_INICIAL, PERIODOS_ANUAIS
+from src.etl.extract import ANO_FINAL, ANO_INICIAL, PERIODOS_ANUAIS
 
 
 def test_serie_e_janeiro_de_cada_ano_sem_furo():
@@ -31,10 +31,10 @@ def test_serie_sustenta_a_particao_canonica():
     """
     Uma transição de teste, duas de validação e ao menos uma de treino.
 
-    É o mínimo que `src/splits.py` aceita. Encurtar a amostra abaixo disso
+    É o mínimo que `src/ml/splits.py` aceita. Encurtar a amostra abaixo disso
     quebraria a partição, e o erro apareceria longe daqui.
     """
-    from src.splits import particionar
+    from src.ml.splits import particionar
 
     particao = particionar(list(PERIODOS_ANUAIS))
     assert len(particao.teste) == 1

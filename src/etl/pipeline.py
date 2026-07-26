@@ -15,10 +15,10 @@ vez de nove. Com `--manter-intermediario` o comportamento antigo volta, útil
 quando se quer consultar o DuckDB direto numa análise exploratória.
 
 Uso:
-    python -m src.pipeline                      # série canônica completa
-    python -m src.pipeline --periodos 202401 202501
-    python -m src.pipeline --manter-intermediario
-    python -m src.pipeline --pular-download     # se os ZIP já estão em disco
+    python -m src.etl.pipeline                      # série canônica completa
+    python -m src.etl.pipeline --periodos 202401 202501
+    python -m src.etl.pipeline --manter-intermediario
+    python -m src.etl.pipeline --pular-download     # se os ZIP já estão em disco
 """
 
 from __future__ import annotations
@@ -28,15 +28,15 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from src.extract import PERIODOS_ANUAIS, download_cnes_zips
-from src.paths import (
+from src.etl.extract import PERIODOS_ANUAIS, download_cnes_zips
+from src.config.paths import (
     CHANGES_FOLDER,
     INTERMEDIATE_FOLDER,
     PRIMARY_FOLDER,
     RAW_FOLDER,
 )
-from src.to_parquet import clean_cnes_data
-from src.to_sql import process_cnes_zip
+from src.etl.to_parquet import clean_cnes_data
+from src.etl.to_sql import process_cnes_zip
 
 # Margem mínima de disco antes de começar uma competência. Abaixo disso, para
 # com mensagem clara em vez de morrer no meio de uma escrita.
@@ -102,7 +102,7 @@ def rodar(
         if not zipfile.is_zipfile(zip_esperado):
             print(
                 f"[{periodo}] ZIP inválido ou truncado: {zip_esperado}. "
-                f"Apague-o e rode `python -m src.extract {periodo}` novamente."
+                f"Apague-o e rode `python -m src.etl.extract {periodo}` novamente."
             )
             continue
 
@@ -156,7 +156,7 @@ def main() -> int:
         return 0
 
     # Importado aqui para que a etapa anterior não pague o custo do import.
-    from src.changes import detectar_mudancas, taxa_de_mudanca
+    from src.etl.changes import detectar_mudancas, taxa_de_mudanca
 
     print(f"\n{'=' * 70}\nDetectando mudanças entre competências consecutivas...")
     detectar_mudancas(periodos=sorted(resultado), reprocess=args.reprocess)

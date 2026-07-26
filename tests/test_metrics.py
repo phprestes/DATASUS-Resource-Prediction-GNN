@@ -1,5 +1,5 @@
 """
-Testes de src/metrics.py.
+Testes de src/ml/metrics.py.
 
 Concentram-se nos casos em que uma métrica pode enganar: desbalanceamento,
 conjunto sem positivo, e empate de escore. Os três aparecem de verdade na
@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.metrics import (
+from src.ml.metrics import (
     average_precision,
     auc_roc,
     avaliar_classificacao,

@@ -26,9 +26,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from src import baselines, changes, gnn, graph, metrics, tasks
-from src.paths import DOCS_DIR
-from src.splits import particionar
+from src.config.paths import DOCS_DIR
+from src.etl import changes
+from src.ml import baselines, gnn, graph, metrics, tasks
+from src.ml.splits import particionar
 
 PASTA_RESULTADOS = DOCS_DIR / "resultados"
 

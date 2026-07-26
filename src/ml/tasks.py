@@ -3,7 +3,7 @@ Tarefas de predição: aquisição de equipamento (primária) e quantidade (secu
 
 Arquitetura, e por que ela é assim: a tabela de rótulos é produzida aqui em
 pandas, a partir da camada primária, e as **três trilhas consomem a mesma
-tabela**. O RelBench é usado para o grafo (`src/graph.py`), não para a tarefa.
+tabela**. O RelBench é usado para o grafo (`src/ml/graph.py`), não para a tarefa.
 
 O motivo é que a tarefa primária é predição de aresta num grafo bipartido
 estabelecimento × tipo de equipamento, e não uma `EntityTask` — que é o que o
@@ -24,15 +24,15 @@ import duckdb
 import pandas as pd
 import pyarrow as pa
 
-from src.changes import Transicao
-from src.graph import (
+from src.etl.changes import Transicao
+from src.ml.graph import (
     COL_ENTIDADE,
     RECORTE_PADRAO,
     data_do_periodo,
     filtro_recorte_sql,
 )
-from src.paths import PRIMARY_FOLDER
-from src.splits import ParticaoTemporal
+from src.config.paths import PRIMARY_FOLDER
+from src.ml.splits import ParticaoTemporal
 
 TABELA_EQUIPAMENTO = "rlEstabEquipamento"
 TABELA_LEITO = "rlEstabComplementar"
@@ -54,7 +54,7 @@ class TabelaTarefa:
     Rótulos prontos para modelagem, com a proveniência anexada.
 
     `df` está em formato longo: uma linha por (entidade, item, transição), com
-    `rotulo` e `conjunto`. `conjunto` vem de `src/splits.py` e nunca é
+    `rotulo` e `conjunto`. `conjunto` vem de `src/ml/splits.py` e nunca é
     recalculado a jusante — é o que garante que as trilhas comparem o mesmo.
     """
 
@@ -212,7 +212,7 @@ def tarefa_aquisicao(
     deliberada:
 
     - O treino só precisa de sinal suficiente para ajustar parâmetros, e a
-      reponderação da perda em `src/gnn.py` já corrige o desbalanceamento
+      reponderação da perda em `src/ml/gnn.py` já corrige o desbalanceamento
       restante.
     - A avaliação precisa do espaço íntegro, senão a prevalência medida é
       artificial e o average precision deixa de significar o que diz significar.

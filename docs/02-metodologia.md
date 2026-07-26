@@ -37,7 +37,7 @@ Sobre o grafo bipartido **estabelecimento × tipo de equipamento**, prever:
 > `t`, passa a possuí-lo no snapshot `t+1`?
 
 Rótulo binário, derivado dos eventos de mudança de
-[`src/changes.py`](../src/changes.py). É a formulação que melhor casa com o
+[`src/etl/changes.py`](../src/etl/changes.py). É a formulação que melhor casa com o
 dado disponível, por três razões:
 
 1. **Usa o sinal que existe.** `rlEstabEquipamento` cresce 67% entre 2017 e
@@ -98,7 +98,7 @@ abrangência. Fora do escopo desta iteração; anotado como extensão possível.
   pontos — eram nove até 202601 entrar (D-29), e a série cresce um janeiro por
   ano. Nada no código conta snapshots à mão: quem precisa da lista usa
   `changes.periodos_disponiveis()`, e a amostra canônica é
-  `src.extract.PERIODOS_ANUAIS`. O projeto original previa cinco snapshots bienais; a densidade foi
+  `src.etl.extract.PERIODOS_ANUAIS`. O projeto original previa cinco snapshots bienais; a densidade foi
   dobrada porque cinco pontos com dois anos de intervalo não sustentam nenhuma
   afirmação sobre dinâmica temporal. A densidade final é confirmada
   empiricamente pelo `notebook/00_analise_alvo.ipynb`, que mede a taxa de
@@ -128,7 +128,7 @@ produção, não um log de eventos. Para cada linha, ele traz apenas a **última
   snapshots** — um ano — e não a granularidade diária da coluna de data.
 
 Daí a unidade de análise ser a **transição** `t → t+1`, materializada por
-[`src/changes.py`](../src/changes.py), e não a linha individual. Com dez
+[`src/etl/changes.py`](../src/etl/changes.py), e não a linha individual. Com dez
 snapshots há nove transições, rotuladas pelo ano de destino: 2018 a 2026.
 
 O filtro "somente linhas que sofreram alteração", previsto no projeto original,
@@ -162,7 +162,7 @@ trabalho é a diferença entre elas.
 
 ### Trilha 1 — Baselines tabulares
 
-Módulo [`src/baselines.py`](../src/baselines.py). Quatro modelos, na ordem em
+Módulo [`src/ml/baselines.py`](../src/ml/baselines.py). Quatro modelos, na ordem em
 que o projeto original os previa:
 
 1. **Persistência ingênua.** O estado em `t+1` é igual ao de `t`. Nenhum
@@ -179,7 +179,7 @@ que o projeto original os previa:
 
 ### Trilha 2 — RDL relacional
 
-Módulo [`src/graph.py`](../src/graph.py), sobre RelBench. O grafo vem do
+Módulo [`src/ml/graph.py`](../src/ml/graph.py), sobre RelBench. O grafo vem do
 `fkey_col_to_pkey_table` derivado de
 [`01-selecao-tabelas.md`](01-selecao-tabelas.md), com `tbEstabelecimento` como
 tabela raiz.
@@ -204,7 +204,7 @@ carregar o país inteiro na memória para depois descartar 98% dele.
 
 ### Trilha 3 — GNN geográfica
 
-Módulo [`src/graph.py`](../src/graph.py). Nós são estabelecimentos; arestas são
+Módulo [`src/ml/graph.py`](../src/ml/graph.py). Nós são estabelecimentos; arestas são
 proximidade espacial derivada de `nu_latitude` e `nu_longitude`, por k-vizinhos
 mais próximos ou por raio fixo. Ignora deliberadamente a estrutura de tabelas.
 
@@ -224,7 +224,7 @@ Roda antes das trilhas 1 a 3 e é ponto de decisão bloqueante.
 
 ### 6.1 Partição temporal
 
-Definida em [`src/splits.py`](../src/splits.py), módulo único consumido pelas
+Definida em [`src/ml/splits.py`](../src/ml/splits.py), módulo único consumido pelas
 três trilhas de modelagem. Partição por **transição**, nunca por linha:
 
 | Conjunto | Transições | Snapshots envolvidos |

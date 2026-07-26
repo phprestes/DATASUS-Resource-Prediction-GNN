@@ -20,7 +20,7 @@ RECORTE  ?= 35
 # Teto de memória do experimento.
 MEM      ?= 7G
 
-# Competências a processar no ETL. Vazio = série canônica de src/extract.py.
+# Competências a processar no ETL. Vazio = série canônica de src/etl/extract.py.
 PERIODOS ?=
 
 # Tabelas a reprocessar em `reprocessar-tabelas`. Sem default de propósito.
@@ -69,16 +69,16 @@ setup:  ## Cria o .venv, instala o pacote e as extensões compiladas do PyG
 etl:  ## ETL completo, competência por competência (baixa ~3,6 GB de ZIP; horas)
 	@echo "Série canônica completa. Cada competência baixa, ingere e converte,"
 	@echo "e o DuckDB intermediário é apagado ao fim de cada uma."
-	$(PY) -m src.pipeline
+	$(PY) -m src.etl.pipeline
 
 etl-periodo:  ## ETL de competências específicas (use PERIODOS="202501 202601")
 	@test -n "$(PERIODOS)" || { echo "erro: informe PERIODOS, ex: make etl-periodo PERIODOS=202601"; exit 1; }
-	$(PY) -m src.pipeline --periodos $(PERIODOS)
+	$(PY) -m src.etl.pipeline --periodos $(PERIODOS)
 
 mudancas:  ## Recalcula os eventos de mudança entre snapshots consecutivos
 	@echo "Reprocessa o diff de todas as tabelas. Necessário depois de mexer em"
 	@echo "chave natural ou em tipagem — ver D-27 e D-30."
-	$(PY) -c "from src.changes import detectar_mudancas, taxa_de_mudanca; \
+	$(PY) -c "from src.etl.changes import detectar_mudancas, taxa_de_mudanca; \
 		detectar_mudancas(reprocess=True); \
 		t = taxa_de_mudanca(); \
 		print(t[t.tabela == 'rlEstabEquipamento'][['periodo_destino','taxa_mudanca','chave_declarada']].to_string(index=False))"
@@ -88,8 +88,8 @@ reprocessar-tabelas:  ## Regera só algumas tabelas na camada primária (TABELAS
 	@test -n "$(PERIODO)" || { echo "erro: informe PERIODO, ex: PERIODO=202601"; exit 1; }
 	@echo "Caminho para quando 01-selecao-tabelas.md admite coluna nova: reprocessa"
 	@echo "só o necessário, e apaga o DuckDB parcial no fim."
-	$(PY) -c "from src.to_sql import process_cnes_zip; from src.to_parquet import clean_cnes_data; \
-		from src.paths import INTERMEDIATE_FOLDER; from pathlib import Path; \
+	$(PY) -c "from src.etl.to_sql import process_cnes_zip; from src.etl.to_parquet import clean_cnes_data; \
+		from src.config.paths import INTERMEDIATE_FOLDER; from pathlib import Path; \
 		tabelas = '$(TABELAS)'.split(','); \
 		process_cnes_zip(['$(PERIODO)'], reprocess=True, tabelas=tabelas); \
 		clean_cnes_data(['$(PERIODO)'], reprocess=True, tabelas=tabelas); \
@@ -108,7 +108,7 @@ teste-schema:  ## Roda só o invariante central do schema
 verificar:  ## Testes + resumo do schema derivado de docs/01-selecao-tabelas.md
 	$(PY) -m pytest tests/ -q
 	@echo ""
-	$(PY) -c "from src import schema; \
+	$(PY) -c "from src.config import schema; \
 		tabelas, fora = schema.carregar(); \
 		util = sum(len(t.por_classificacao('util')) for t in tabelas); \
 		print(f'tabelas incluídas: {len(schema.FACT_TABLES)} | fora: {len(fora)}'); \

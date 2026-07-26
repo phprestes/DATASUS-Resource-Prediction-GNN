@@ -5,8 +5,8 @@ import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
 
-from src.paths import INTERMEDIATE_FOLDER, PRIMARY_FOLDER
-from src.schema import CNES_DTYPES, CNES_EXTRACT_COLUMNS
+from src.config.paths import INTERMEDIATE_FOLDER, PRIMARY_FOLDER
+from src.config.schema import CNES_DTYPES, CNES_EXTRACT_COLUMNS
 
 INPUT_PREFIX = 'sql_cnes_'
 

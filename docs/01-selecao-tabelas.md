@@ -1,7 +1,7 @@
 # Seleção de tabelas e colunas do CNES
 
 Este arquivo é a **fonte da verdade** do schema usado pelo projeto. É lido em
-tempo de import por [`src/schema.py`](../src/schema.py), que dele deriva
+tempo de import por [`src/config/schema.py`](../src/config/schema.py), que dele deriva
 `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`,
 `CNES_PKEY`, `CNES_NATURAL_KEY` e `CNES_FKEY`. Editar este arquivo muda o
 pipeline; não existe uma segunda lista em código para manter em sincronia.
@@ -61,7 +61,7 @@ deformações são recorrentes:
 ## Legenda das colunas
 
 - **dtype** — tipo de destino aplicado na conversão para Parquet por
-  `src/to_parquet.py`. `datetime64[ns]` dispara `try_strptime` com máscara
+  `src/etl/to_parquet.py`. `datetime64[ns]` dispara `try_strptime` com máscara
   `%d/%m/%Y` e anula datas anteriores a 1900-01-01, sentinela do CNES.
 - **pkey** / **fkey_para** — o grafo relacional entregue ao RelBench.
 - **nulos** — percentual de nulos em `201701`/`202501`, as duas competências da
@@ -87,7 +87,7 @@ tem uma linha por equipamento de cada estabelecimento, não uma por
 estabelecimento.
 
 **Chave natural** é o conjunto de colunas que identifica uma *linha*, e é o que
-`src/changes.py` precisa para distinguir uma modificação de uma remoção seguida
+`src/etl/changes.py` precisa para distinguir uma modificação de uma remoção seguida
 de inserção ao comparar dois snapshots. É opcional: quando não declarada, o
 diff opera por presença da tupla inteira e não classifica modificações — o que
 infla a taxa de mudança, porque cada alteração conta como dois eventos.
@@ -893,7 +893,7 @@ externa (`04-dados-externos.md`).
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_unidade` | VARCHAR2(31) | string | util | sim | `tbEstabelecimento` | 0/0 | Código do Estabelecimento de Saúde |
-| `sq_acolhimento` | NUMBER(10) | string | util | - | - | 0/0 | Sequencial da Unidade de Acolhimento. Não é atributo, é identidade: com `co_unidade` forma a chave natural desta tabela, e sem ela `src/changes.py` não distingue modificação de remoção mais inserção (D-27). Em `rlEstabUnidAcolhim` cumpre o mesmo papel |
+| `sq_acolhimento` | NUMBER(10) | string | util | - | - | 0/0 | Sequencial da Unidade de Acolhimento. Não é atributo, é identidade: com `co_unidade` forma a chave natural desta tabela, e sem ela `src/etl/changes.py` não distingue modificação de remoção mais inserção (D-27). Em `rlEstabUnidAcolhim` cumpre o mesmo papel |
 | `co_municipio` | VARCHAR2(6) | category | util | - | - | 0/0 | Código do Município |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(100) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |

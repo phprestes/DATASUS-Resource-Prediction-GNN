@@ -50,7 +50,7 @@ def camada_primaria(tmp_path: Path):
     Fábrica de snapshots na camada primária.
 
     Devolve `(raiz, escrever)`, onde `escrever(periodo, linhas, tabela=...)`
-    materializa um Parquet no layout que src/changes.py espera:
+    materializa um Parquet no layout que src/etl/changes.py espera:
     `{raiz}/{periodo}/{tabela}.parquet`.
     """
     raiz = tmp_path / "03_primary"

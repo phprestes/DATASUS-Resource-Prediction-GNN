@@ -1,5 +1,5 @@
 """
-Testes de src/changes.py.
+Testes de src/etl/changes.py.
 
 O que precisa ser garantido, e por quê:
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from src import changes
+from src.etl import changes
 from tests.conftest import equipamento
 
 TABELA = "rlEstabEquipamento"

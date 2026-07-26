@@ -20,8 +20,8 @@ canônico do RelBench (`make_pkey_fkey_graph`) exige a pilha `torch_frame` com
 features de uma codificação simples. É menos maquinaria e mais legível, ao custo
 de não usar os encoders de coluna do torch_frame — anotado como extensão.
 
-As funções de predição devolvem `src.baselines.Previsao`, o mesmo tipo das
-baselines, para que `src.metrics.tabela_de_resultados` receba tudo junto e a
+As funções de predição devolvem `src.ml.baselines.Previsao`, o mesmo tipo das
+baselines, para que `src.ml.metrics.tabela_de_resultados` receba tudo junto e a
 regra de reporte de D-11 seja o caminho mais curto.
 """
 
@@ -39,10 +39,10 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn import Linear, SAGEConv, to_hetero
 from relbench.base import Database
 
-from src.baselines import Previsao
-from src.graph import COL_ENTIDADE, GrafoGeografico
-from src.splits import ParticaoTemporal
-from src.tasks import COL_CONJUNTO, COL_ROTULO, TabelaTarefa
+from src.ml.baselines import Previsao
+from src.ml.graph import COL_ENTIDADE, GrafoGeografico
+from src.ml.splits import ParticaoTemporal
+from src.ml.tasks import COL_CONJUNTO, COL_ROTULO, TabelaTarefa
 
 SEMENTE = 42
 
@@ -196,7 +196,7 @@ def features_de_estabelecimento(
     O corte por período é o que impede vazamento: as features do treino não
     podem enxergar snapshots posteriores ao fim da janela de treino.
     """
-    from src.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
+    from src.ml.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
 
     df = db.table_dict[TABELA_RAIZ].df.to_pandas()
     if ate_periodo:
@@ -267,7 +267,7 @@ def escolher_categoria(tabela: str) -> str | None:
     (`co_seq_central`, `sq_acolhimento`): tomar `natural[0]` cegamente escolheria
     essas. Sem componente aproveitável, cai para a coluna `category` da tabela.
     """
-    from src.schema import CNES_DTYPES, CNES_NATURAL_KEY, CNES_USEFUL_COLUMNS
+    from src.config.schema import CNES_DTYPES, CNES_NATURAL_KEY, CNES_USEFUL_COLUMNS
 
     dtypes = CNES_DTYPES.get(tabela, {})
     natural = [
@@ -348,7 +348,7 @@ def grafo_relacional_para_data(
 
     `min_arestas` descarta relações raras demais para contribuir.
     """
-    from src.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
+    from src.ml.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
 
     if ate_periodo is None:
         raise ErroGNN(
@@ -526,8 +526,8 @@ def treinar_aquisicao(
     torch.manual_seed(SEMENTE)
     dispositivo = dispositivo or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    from src.graph import TABELA_RAIZ
-    from src.metrics import average_precision
+    from src.ml.graph import TABELA_RAIZ
+    from src.ml.metrics import average_precision
 
     dados = dados.to(dispositivo)
     dim_no = dim_saida
@@ -628,10 +628,10 @@ def prever_aquisicao(
     Escores num conjunto ainda não visto, no mesmo formato das baselines.
 
     Devolver `Previsao` é o que permite jogar GNN e baselines na mesma tabela de
-    `src.metrics.tabela_de_resultados` — a regra de reporte de D-11 vira o
+    `src.ml.metrics.tabela_de_resultados` — a regra de reporte de D-11 vira o
     caminho de menor esforço em vez de disciplina manual.
     """
-    from src.graph import TABELA_RAIZ
+    from src.ml.graph import TABELA_RAIZ
 
     dispositivo = dispositivo or next(modelo.parameters()).device.type
     dados = dados.to(dispositivo)

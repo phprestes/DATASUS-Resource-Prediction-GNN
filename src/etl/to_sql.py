@@ -5,8 +5,8 @@ import zipfile
 import shutil
 from tqdm import tqdm
 from pathlib import Path
-from src.paths import RAW_FOLDER, INTERMEDIATE_FOLDER, TEMP_EXTRACT_DIR
-from src.schema import FACT_TABLES
+from src.config.paths import RAW_FOLDER, INTERMEDIATE_FOLDER, TEMP_EXTRACT_DIR
+from src.config.schema import FACT_TABLES
 
 INPUT_PREFIX = 'BASE_DE_DADOS_CNES_'
 OUTPUT_PREFIX = 'sql_cnes_'

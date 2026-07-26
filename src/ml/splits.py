@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.changes import Transicao, transicoes
+from src.etl.changes import Transicao, transicoes
 
 # Snapshots tirados sob a pandemia de covid-19. A aquisição de equipamentos
 # nesse período não é amostra do mesmo processo que a dos demais: respiradores e

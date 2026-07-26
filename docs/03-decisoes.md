@@ -8,6 +8,13 @@ o que ela custava.
 Decisões marcadas **pendente** aguardam evidência do
 `notebook/00_analise_alvo.ipynb` e devem ser fechadas antes da modelagem.
 
+**Sobre os caminhos de módulo citados abaixo.** As entradas anteriores a D-33 foram
+escritas quando `src/` era plano, e os caminhos nelas foram atualizados para os
+subpacotes atuais — `src/config/`, `src/etl/` e `src/ml/` — para que continuem
+navegáveis. O raciocínio e a evidência de cada decisão estão como foram escritos. As
+menções a `src/constant.py`, `src/model.py` e `src/check_changes.py` referem-se a
+arquivos apagados e permanecem como registro histórico.
+
 ---
 
 ## D-01 — Alvo migra de leitos para equipamentos
@@ -112,7 +119,7 @@ cronograma original já antecipava. Fica como extensão caso D-10 mostre que anu
 detectava a divergência.
 
 **Decisão.** [`01-selecao-tabelas.md`](01-selecao-tabelas.md) é a fonte única da
-verdade. [`src/schema.py`](../src/schema.py) o lê em tempo de import e dele
+verdade. [`src/config/schema.py`](../src/config/schema.py) o lê em tempo de import e dele
 deriva `FACT_TABLES`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY` e
 `CNES_FKEY`. `src/constant.py` é removido.
 
@@ -195,7 +202,7 @@ o que torna essa coluna um valor censurado à direita, dependente de quando o
 snapshot foi tirado — e não uma história.
 
 **Decisão.** A unidade de análise passa a ser a transição `t → t+1`,
-materializada por [`src/changes.py`](../src/changes.py) como evento de mudança.
+materializada por [`src/etl/changes.py`](../src/etl/changes.py) como evento de mudança.
 
 O eixo temporal do grafo é a **data do snapshot** (1º de janeiro da
 competência), não a coluna de atualização e não a data do evento. Os eventos de
@@ -265,7 +272,7 @@ há evidência de ciclo escondido que justifique o custo de densificar.
 **Nota de leitura.** `tbEstabelecimento` aparece com taxa acima de 1,0 em 2018 e
 2020. Isso não é mudança real: a tabela não tem chave natural declarada, então
 cada modificação conta como uma remoção mais uma inserção, e a coluna `alterada`
-sai zerada. É o comportamento documentado em `src/changes.py`, não um defeito
+sai zerada. É o comportamento documentado em `src/etl/changes.py`, não um defeito
 dos dados.
 
 ---
@@ -279,7 +286,7 @@ como máscara de avaliação. O número reportado como desempenho de teste era
 desempenho no conjunto de treino. A lógica de partição real existia apenas
 inline no notebook de modelagem, nunca em `src/`.
 
-**Decisão.** [`src/splits.py`](../src/splits.py) passa a ser o módulo único de
+**Decisão.** [`src/ml/splits.py`](../src/ml/splits.py) passa a ser o módulo único de
 partição, consumido pelas três trilhas de modelagem, com teste automatizado de
 vazamento. Nenhuma métrica de GNN é reportada sem persistência ingênua e modelo
 tabular na mesma tabela, sobre a mesma partição.
@@ -341,7 +348,7 @@ entregue ao RelBench continha uma referência pendurada. O erro era invisível
 justamente porque as duas listas eram mantidas separadamente — o mesmo modo de
 falha que D-05 elimina.
 
-**Como não regride.** A validação de `src/schema.py` recusa qualquer
+**Como não regride.** A validação de `src/config/schema.py` recusa qualquer
 `fkey_para` que não nomeie uma tabela com escopo `incluida`, e falha no import
 em vez de seguir com o grafo incompleto.
 
@@ -484,7 +491,7 @@ Duas obrigações decorrem, além das já registradas em D-15:
 2. As coordenadas também são **sujas**: 1,2% das existentes caem fora de uma
    caixa generosa em torno do município, chegando a 197 km do centro numa cidade
    de cerca de 35 km de largura. O filtro de plausibilidade de
-   `src/graph.py`, que hoje usa a caixa do Brasil, precisa ser apertado para a
+   `src/ml/graph.py`, que hoje usa a caixa do Brasil, precisa ser apertado para a
    caixa da amostra.
 
 **Alternativa avaliada e rebaixada a fallback.** `co_cep` tem 100% de
@@ -530,7 +537,7 @@ Zero duplicatas em 201701 e 202501:
 - `rlEstabComplementar` por (`co_unidade`, `co_leito`, `co_tipo_leito`)
 
 Deixam de ser hipóteses derivadas do dicionário e passam a ser fato verificado.
-A classificação `alterada` de `src/changes.py` é confiável para essas duas
+A classificação `alterada` de `src/etl/changes.py` é confiável para essas duas
 tabelas, e só para elas.
 
 ### 3. Densidade anual: mantida
@@ -616,7 +623,7 @@ recuperam depois.
 schema que valha uniformemente na série. Código que lê vários snapshots precisa
 ser tolerante a isso:
 
-- `src/graph.py::_empilhar` já intersecta as colunas declaradas com as presentes
+- `src/ml/graph.py::_empilhar` já intersecta as colunas declaradas com as presentes
   em cada arquivo, e concatena com `promote_options="permissive"`. Estava correto
   por construção, não por sorte.
 - Qualquer leitura direta de múltiplos Parquet via DuckDB precisa de
@@ -968,7 +975,7 @@ coisas continua sendo a inferência declarada em D-02, e continua sendo hipótes
 
 `docs/01-selecao-tabelas.md` declarava chave natural para duas tabelas —
 `rlEstabEquipamento` e `rlEstabComplementar` (D-18, veredito 2 do notebook 00).
-As outras 42 caíam no modo sem chave de `src/changes.py`, em que cada modificação
+As outras 42 caíam no modo sem chave de `src/etl/changes.py`, em que cada modificação
 conta como remoção mais inserção e a taxa de mudança sai inflada. O veredito 3
 registrou isso como limitação; era limitação evitável.
 
@@ -1027,7 +1034,7 @@ comportamento que a chave natural existe para evitar. As duas foram encurtadas.
   sem chave, toda linha alterada contava duas vezes. Com `co_unidade` declarada, a
   taxa cai para 0,83 na primeira transição e 0,17–0,25 nas seguintes, e
   `alterada` passa a ser preenchida.
-- **`src/gnn.py::escolher_categoria`** preferia `natural[0]` como vocabulário de
+- **`src/ml/gnn.py::escolher_categoria`** preferia `natural[0]` como vocabulário de
   categorias do grafo. Com 41 chaves declaradas isso passaria a escolher
   `co_municipio` (um nó por município, ligando todos os estabelecimentos da
   cidade) ou sequenciais como `co_seq_central` e `sq_acolhimento` (um nó por
@@ -1149,9 +1156,9 @@ entrar em feature agora.
 
 ### Onde "nove" estava cravado no código
 
-- `src/extract.py` — `ANO_INICIAL`/`ANO_FINAL`, e `PERIODOS_ANUAIS` derivado. É o
+- `src/etl/extract.py` — `ANO_INICIAL`/`ANO_FINAL`, e `PERIODOS_ANUAIS` derivado. É o
   único lugar onde se acrescenta um janeiro.
-- `src/graph.py::CNESDataset` — `val_timestamp` e `test_timestamp` eram literais
+- `src/ml/graph.py::CNESDataset` — `val_timestamp` e `test_timestamp` eram literais
   `202301` e `202501`. Agora saem de `particionar(periodos_disponiveis())`. Um
   literal ali faria o RelBench avaliar num período que a partição chama de treino.
 - `tests/test_splits.py` — a lista `ANUAIS` era reescrita no arquivo de teste;
@@ -1346,3 +1353,56 @@ supera a geográfica neste recorte e nesta transição.
 
 Nenhuma das duas é nova, mas nenhuma estava quantificada.
 
+## D-33 — `src/` separado em três pacotes por responsabilidade
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+**Contexto.** `src/` tinha treze módulos num único nível, sem indicação de qual
+pertencia a qual etapa. `paths.py` e `schema.py` (contrato), `extract.py`,
+`to_sql.py`, `to_parquet.py`, `changes.py`, `pipeline.py` (produção de dado) e
+`splits.py`, `tasks.py`, `baselines.py`, `graph.py`, `gnn.py`, `metrics.py`
+(modelagem) apareciam lado a lado em ordem alfabética. Navegar exigia conhecer o
+projeto de antemão, que é exatamente o que a estrutura deveria dispensar.
+
+**Decisão.** Três pacotes, nomeados pela responsabilidade:
+
+| Pacote | Módulos | Responsabilidade |
+|---|---|---|
+| `src/config/` | `paths.py`, `schema.py` | contrato e constantes: onde os dados moram, qual é o schema |
+| `src/etl/` | `extract.py`, `to_sql.py`, `to_parquet.py`, `changes.py`, `pipeline.py` | os quatro estágios que produzem as camadas de dados |
+| `src/ml/` | `splits.py`, `tasks.py`, `baselines.py`, `graph.py`, `gnn.py`, `metrics.py` | tarefa, partição, grafos, modelos e métricas |
+
+**A regra que a separação codifica.** A dependência aponta sempre para o
+contrato, nunca de volta: `src.config` não importa de `src.etl` nem de `src.ml`, e
+`src.etl` não importa de `src.ml`. Cada `__init__.py` carrega o mapa dos próprios
+módulos e a regra que obedece, de modo que a decisão de onde colocar um módulo
+novo esteja escrita no lugar onde ela é tomada.
+
+**Mudanças de invocação.** Os pontos de entrada por módulo mudaram de caminho:
+
+```
+python -m src.pipeline    ->  python -m src.etl.pipeline
+python -m src.extract     ->  python -m src.etl.extract
+python -m src.to_sql      ->  python -m src.etl.to_sql
+python -m src.to_parquet  ->  python -m src.etl.to_parquet
+python -m src.changes     ->  python -m src.etl.changes
+```
+
+O `Makefile` absorve essa mudança, e continua sendo a entrada recomendada — quem
+usa `make` não percebe a reorganização.
+
+**Um detalhe que quebraria em silêncio.** `paths.py` derivava a raiz do projeto
+com `Path(__file__).resolve().parent.parent`. Descendo um nível, isso passaria a
+apontar para `src/`, e todas as camadas de dados seriam procuradas em
+`src/data/`. Corrigido para `parents[2]`, com o comentário explicando que o índice
+acompanha a profundidade do arquivo.
+
+**Verificado.** Os 67 testes passam; `src.config`, `src.etl` e `src.ml` importam
+por completo; `python -m src.etl.pipeline --help` e `python -m src.etl.changes`
+respondem; `make testes`, `make verificar` e `make resultados` funcionam. Os cinco
+notebooks e os dois scripts de `tools/` foram atualizados.
+
+**Descartado.** Manter atalhos de compatibilidade em `src/__init__.py`
+reexportando os nomes antigos. Dois caminhos válidos para o mesmo módulo é o tipo
+de ambiguidade que a reorganização existe para eliminar, e um repositório de
+pesquisa com um único consumidor não tem por que carregar essa dívida.

@@ -12,9 +12,9 @@ Code comments, docstrings, prints and docs are in **Portuguese**. Keep new code 
 
 Five Markdown files in [docs/](docs/) are the project's contract. They are not summaries of the code — the code is downstream of them.
 
-- **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/schema.py](src/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
+- **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/config/schema.py](src/config/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
 - **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
-- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 32 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 33 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
 - **[docs/04-dados-externos.md](docs/04-dados-externos.md)** — the six-item admission test for any source outside CNES. The binding rule: no external source enters as a label.
 - **[docs/05-esboco-artigo.md](docs/05-esboco-artigo.md)** — the article outline: what the paper claims, in what order, and what is still unwritten. Formal register, unlike the rest of the docs. Carries a figure manifest with eight slots whose captions are written and whose `![...]` lines sit commented until the file exists in [docs/figuras/](docs/figuras/) — naming convention and provenance in `docs/figuras/README.md`. The README describes the repository; this holds the argument.
 - **[docs/DICIONARIO_DE_DADOS.pdf](docs/DICIONARIO_DE_DADOS.pdf)** — the DATASUS data dictionary (2025 edition), 155 pages. It describes the **Oracle** database, not the distributed CSV: the extraction exports a subset of the columns and renames some. Where the two disagree, the CSV wins. Read it with `pdftotext -layout`, never page by page.
@@ -43,11 +43,11 @@ Underneath, the stages are still plain modules if you need them directly:
 
 ```bash
 source .venv/bin/activate
-python -m src.pipeline             # orchestrated ETL; `--periodos`, `--pular-download`
-python -m src.extract 202601       # 10 annual ZIPs -> data/01_raw (~3.6 GB)
-python -m src.to_sql               # ZIP CSVs -> DuckDB per period -> data/02_intermediate
-python -m src.to_parquet           # DuckDB -> typed Parquet -> data/03_primary
-python -m src.changes              # snapshot diffs -> change events -> data/04_feature
+python -m src.etl.pipeline             # orchestrated ETL; `--periodos`, `--pular-download`
+python -m src.etl.extract 202601       # 10 annual ZIPs -> data/01_raw (~3.6 GB)
+python -m src.etl.to_sql               # ZIP CSVs -> DuckDB per period -> data/02_intermediate
+python -m src.etl.to_parquet           # DuckDB -> typed Parquet -> data/03_primary
+python -m src.etl.changes              # snapshot diffs -> change events -> data/04_feature
 python -m pytest tests/test_schema.py::test_fact_tables_e_useful_columns_nao_podem_divergir
 ```
 
@@ -61,7 +61,7 @@ All ETL stages default to `reprocess=False` (skip what exists) — the series is
 
 `data/01_raw` (`BASE_DE_DADOS_CNES_{YYYYMM}.ZIP`) → `data/02_intermediate` (`sql_cnes_{YYYYMM}.duckdb`) → `data/03_primary` (`{YYYYMM}/{tabela}.parquet`) → `data/04_feature/changes/{tabela}/{periodo}.parquet`. Nothing under `data/` is versioned; it is all reproducible from stage 1.
 
-The period is always the 6-char string `YYYYMM` ("competência") and is the partition key everywhere. The canonical sample is `src.extract.PERIODOS_ANUAIS` — January of each year, 2017–2026, ten snapshots and nine transitions (D-04, extended by D-29). Never hardcode the count: `changes.periodos_disponiveis()` reads the primary layer, `PERIODOS_ANUAIS` is the intended series, and `ANO_FINAL` in `extract.py` is the single place a new January is added.
+The period is always the 6-char string `YYYYMM` ("competência") and is the partition key everywhere. The canonical sample is `src.etl.extract.PERIODOS_ANUAIS` — January of each year, 2017–2026, ten snapshots and nine transitions (D-04, extended by D-29). Never hardcode the count: `changes.periodos_disponiveis()` reads the primary layer, `PERIODOS_ANUAIS` is the intended series, and `ANO_FINAL` in `extract.py` is the single place a new January is added.
 
 ### Time is the subtle part
 
@@ -69,39 +69,44 @@ Read this before touching anything temporal. A competência ZIP is a **snapshot 
 
 - `to_chardt_atualizacaoddmmyyyy` is **right-censored**. Using it as a graph `time_col` — as the old code did — assigns each row an instant that depends on when the snapshot was taken.
 - Changes between two snapshots are unrecoverable. The study's real temporal resolution is the snapshot spacing, not the date column's granularity.
-- The unit of analysis is therefore the **transition** `t → t+1` ([src/changes.py](src/changes.py)), and the graph's `time_col` is the **snapshot date** (Jan 1 of the competência), which is exact and uniform. Events supply labels; snapshots supply state. See D-08.
+- The unit of analysis is therefore the **transition** `t → t+1` ([src/etl/changes.py](src/etl/changes.py)), and the graph's `time_col` is the **snapshot date** (Jan 1 of the competência), which is exact and uniform. Events supply labels; snapshots supply state. See D-08.
 
 ### Modules
 
-| Module | Role |
-|---|---|
-| [src/paths.py](src/paths.py) | data layer locations, doc locations |
-| [src/schema.py](src/schema.py) | parses `01-selecao-tabelas.md`; strict, fails the import on malformed input |
-| [src/extract.py](src/extract.py), [src/to_sql.py](src/to_sql.py), [src/to_parquet.py](src/to_parquet.py) | the three ETL stages |
-| [src/changes.py](src/changes.py) | snapshot diffing, change events, change-rate measurement |
-| [src/splits.py](src/splits.py) | the single temporal partition, consumed by all modelling tracks |
-| [src/tasks.py](src/tasks.py) | label tables: acquisition (primary), quantity (secondary) |
-| [src/baselines.py](src/baselines.py) | track 1 — five baselines with no structural information |
-| [src/graph.py](src/graph.py) | tracks 2 and 3 — RelBench `Database`, and the geographic kNN graph |
-| [src/gnn.py](src/gnn.py) | encoders, shared pair decoder, training loop |
-| [src/metrics.py](src/metrics.py) | average precision, AUC, MAP@k, RMSE/MAE, results table |
+`src/` is three packages, split by responsibility (D-33). The dependency only ever points at the contract: `config` imports nothing from the others, `etl` imports nothing from `ml`.
+
+| Package | Module | Role |
+|---|---|---|
+| [src/config](src/config/) | [paths.py](src/config/paths.py) | data layer locations, doc locations. `BASE_DIR` is `parents[2]` — it breaks if the file moves depth |
+| | [schema.py](src/config/schema.py) | parses `01-selecao-tabelas.md`; strict, fails the import on malformed input |
+| [src/etl](src/etl/) | [extract.py](src/etl/extract.py), [to_sql.py](src/etl/to_sql.py), [to_parquet.py](src/etl/to_parquet.py) | the three layer-producing stages |
+| | [changes.py](src/etl/changes.py) | snapshot diffing, change events, change-rate measurement |
+| | [pipeline.py](src/etl/pipeline.py) | orchestrates the stages one competência at a time |
+| [src/ml](src/ml/) | [splits.py](src/ml/splits.py) | the single temporal partition, consumed by all modelling tracks |
+| | [tasks.py](src/ml/tasks.py) | label tables: acquisition (primary), quantity (secondary) |
+| | [baselines.py](src/ml/baselines.py) | track 1 — five baselines with no structural information |
+| | [graph.py](src/ml/graph.py) | tracks 2 and 3 — RelBench `Database`, and the geographic kNN graph |
+| | [gnn.py](src/ml/gnn.py) | encoders, shared pair decoder, training loop |
+| | [metrics.py](src/ml/metrics.py) | average precision, AUC, MAP@k, RMSE/MAE, results table |
+
+Each package's `__init__.py` carries the map of its own modules and the rule it obeys — read those before adding a module, and put it where the dependency direction allows.
 
 `tools/build_selecao_inicial.py` is a one-shot migrator kept as a provenance record: it generated the first version of the selection doc by joining the old PDF, `src/constant.py` (read from git history — the file is deleted) and the empirical report. It refuses to overwrite the doc without `--force`.
 
 ### Conventions that will bite you
 
-- **CSV naming.** Files inside the ZIP are `{TableName}{YYYYMM}.csv`. [to_sql.py](src/to_sql.py) strips the 6-char period to match `FACT_TABLES` but creates the DuckDB table under the **full suffixed name** (`tbEstabelecimento201701`); [to_parquet.py](src/to_parquet.py) strips it again. Changing the period width breaks both.
+- **CSV naming.** Files inside the ZIP are `{TableName}{YYYYMM}.csv`. [to_sql.py](src/etl/to_sql.py) strips the 6-char period to match `FACT_TABLES` but creates the DuckDB table under the **full suffixed name** (`tbEstabelecimento201701`); [to_parquet.py](src/etl/to_parquet.py) strips it again. Changing the period width breaks both.
 - **Everything is VARCHAR at the intermediate layer.** Ingest uses `all_varchar=True`, `normalize_names=True`, `sep=';'`, `encoding='ISO_8859_1'`. Typing happens only in `to_parquet`, driven by `CNES_DTYPES`. `datetime64[ns]` triggers `try_strptime` with `%d/%m/%Y` and nulls dates before 1900-01-01 (a CNES sentinel); string and category columns get `NULLIF(TRIM(...), '')`, because Oracle `CHAR(n)` arrives space-padded and the padding **changes when CNES widens a column** — that is D-30, and it silently broke every cross-snapshot comparison of `co_tipo_equipamento`.
 - **Both ETL stages take `tabelas=[...]`.** Admitting a column in `01-selecao-tabelas.md` means the existing Parquet lacks it; reprocessing only the affected tables costs minutes instead of hours. The intermediate DuckDB produced that way is **partial** — delete it afterwards, or a later `to_parquet` run over it exports only those tables.
 - **Three name spellings for the same thing.** Oracle dictionary (`RL_ESTAB_COMPLEMENTAR`), CSV/DuckDB (`rlEstabComplementar`), and date columns wrapped in the extraction's own SQL (`TO_CHAR(DT_ATUALIZACAO,'DD/MM/YYYY')` → `to_chardt_atualizacaoddmmyyyy`, sometimes with a table alias inside: `to_charadt_atualizacaoddmmyyyy`). Documented in `01-selecao-tabelas.md`.
-- **`pkey` is not a row key.** `CNES_PKEY` is the *entity* key RelBench joins on (`co_unidade`) and is almost never unique — `rlEstabEquipamento` has one row per equipment, not per establishment. Row identity is `CNES_NATURAL_KEY`: **42 of the 44** tables declare one, every tuple verified to have zero duplicates across every snapshot (D-27). The two without are `rlEstabServClass` (the dictionary's key duplicates — and it is the first-choice alternative target) and `rlEstabSipac`. The dictionary's key is not authority: for `rlMunUnidAcolhim` it duplicates in every snapshot and needed `co_municipio` added. Adding a key changes `changes.py` output, so re-run `python -m src.changes` with `reprocess=True` after editing one.
+- **`pkey` is not a row key.** `CNES_PKEY` is the *entity* key RelBench joins on (`co_unidade`) and is almost never unique — `rlEstabEquipamento` has one row per equipment, not per establishment. Row identity is `CNES_NATURAL_KEY`: **42 of the 44** tables declare one, every tuple verified to have zero duplicates across every snapshot (D-27). The two without are `rlEstabServClass` (the dictionary's key duplicates — and it is the first-choice alternative target) and `rlEstabSipac`. The dictionary's key is not authority: for `rlMunUnidAcolhim` it duplicates in every snapshot and needed `co_municipio` added. Adding a key changes `changes.py` output, so re-run `python -m src.etl.changes` with `reprocess=True` after editing one.
 - **`fkey_para` only when the column holds values of the destination's pkey.** The dictionary's foreign keys are composite and this format writes one column per row, so transcribing them column by column produced 33 declarations that join nothing — measured, literally zero matching values (D-28). `co_unidade` always points at `tbEstabelecimento`. Don't re-add component FKs; the composite case is unexpressible today.
 - **Tables hold `pyarrow.Table`, not `pandas.DataFrame`.** Deliberate: the municipality filter is pushed into the Parquet scan. Call `.to_pandas()` explicitly; don't assume pandas.
-- **`recorte` is the main cost lever.** [graph.py](src/graph.py) filters the root on `co_municipio_gestor` by IBGE-code prefix, then pushes the resulting `co_unidade` set as an `isin` predicate into every child table's scan. Without it you load the whole country.
+- **`recorte` is the main cost lever.** [graph.py](src/ml/graph.py) filters the root on `co_municipio_gestor` by IBGE-code prefix, then pushes the resulting `co_unidade` set as an `isin` predicate into every child table's scan. Without it you load the whole country.
 
 ### Comparability is the point of the design
 
-All tracks consume the same `TabelaTarefa` and the same `ParticaoTemporal`, and all return the same `Previsao` dataclass, so `src.metrics.tabela_de_resultados` can put them in one table. **Never report a GNN number without the persistence baseline beside it** (D-11) — the previous version of the project reported training-set performance as test performance, and nothing caught it.
+All tracks consume the same `TabelaTarefa` and the same `ParticaoTemporal`, and all return the same `Previsao` dataclass, so `src.ml.metrics.tabela_de_resultados` can put them in one table. **Never report a GNN number without the persistence baseline beside it** (D-11) — the previous version of the project reported training-set performance as test performance, and nothing caught it.
 
 Track 1 must stay free of relational and spatial features. Adding neighbourhood aggregates to the baselines would erase the difference the experiment exists to measure.
 

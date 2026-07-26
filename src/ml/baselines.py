@@ -15,7 +15,7 @@ Nenhum deles vê a estrutura relacional ou a vizinhança geográfica. É esse o
 ponto: a diferença entre eles e as trilhas 2 e 3 é a medida do valor da
 estrutura.
 
-Todos consomem a `TabelaTarefa` de src/tasks.py e a partição de src/splits.py,
+Todos consomem a `TabelaTarefa` de src/ml/tasks.py e a partição de src/ml/splits.py,
 sem recalcular nada — é o que garante que comparem os mesmos exemplos.
 """
 
@@ -27,8 +27,8 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
-from src.splits import ErroParticao, ParticaoTemporal
-from src.tasks import COL_CONJUNTO, COL_ROTULO, TabelaTarefa
+from src.ml.splits import ErroParticao, ParticaoTemporal
+from src.ml.tasks import COL_CONJUNTO, COL_ROTULO, TabelaTarefa
 
 # Estabelecimento com menos exemplos que isso não sustenta um modelo próprio;
 # cai para a previsão do modelo geral.
@@ -120,7 +120,7 @@ def _validar_particao(tarefa: TabelaTarefa, particao: ParticaoTemporal) -> None:
 
     periodos = set(tarefa.df.loc[tarefa.df[COL_CONJUNTO] == "treino", "periodo_destino"])
     try:
-        from src.splits import verificar_features_sem_vazamento
+        from src.ml.splits import verificar_features_sem_vazamento
 
         verificar_features_sem_vazamento(particao, periodos)
     except ErroParticao as erro:
@@ -420,7 +420,7 @@ def rodar_todas(
     Roda as cinco baselines sobre o mesmo conjunto e devolve todas as previsões.
 
     Existe para que a regra de reporte de D-11 seja o caminho de menor esforço:
-    a saída daqui alimenta `src.metrics.tabela_de_resultados` diretamente, com as
+    a saída daqui alimenta `src.ml.metrics.tabela_de_resultados` diretamente, com as
     baselines já ao lado de qualquer GNN que se queira acrescentar.
     """
     previsoes = [

@@ -1,5 +1,5 @@
 """
-Testes de src/splits.py.
+Testes de src/ml/splits.py.
 
 O valor destes testes é negativo: eles existem para que a partição **falhe** em
 vez de produzir silenciosamente um número bonito e errado. O modo de falha que
@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import pytest
 
-from src.splits import (
+from src.ml.splits import (
     ErroParticao,
     ParticaoTemporal,
     particionar,
     verificar_features_sem_vazamento,
     verificar_sem_vazamento,
 )
-from src.changes import Transicao
-from src.extract import PERIODOS_ANUAIS
+from src.etl.changes import Transicao
+from src.etl.extract import PERIODOS_ANUAIS
 
-# A amostra canônica, lida de src/extract.py em vez de reescrita aqui: a série
+# A amostra canônica, lida de src/etl/extract.py em vez de reescrita aqui: a série
 # cresce um janeiro por ano (D-29), e uma lista duplicada neste arquivo passaria
 # a testar uma amostra que não é mais a do projeto.
 ANUAIS = list(PERIODOS_ANUAIS)

@@ -1,5 +1,5 @@
 """
-Testes de src/schema.py.
+Testes de src/config/schema.py.
 
 Duas famílias de garantia:
 
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from src import schema
-from src.schema import ErroSchema
+from src.config import schema
+from src.config.schema import ErroSchema
 
 # Um doc mínimo mas bem formado, base das variações de erro abaixo.
 DOC_VALIDO = """# Seleção

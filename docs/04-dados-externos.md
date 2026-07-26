@@ -62,7 +62,7 @@ realizados em 2025 é altamente informativo sobre o equipamento existente em 202
 e usá-lo para prever a aquisição de 2025 seria prever o presente com o presente.
 
 Fontes de produção só entram defasadas, com o corte explicitado por
-`src/splits.py`.
+`src/ml/splits.py`.
 
 ### C5 — Viés de cobertura mensurável
 

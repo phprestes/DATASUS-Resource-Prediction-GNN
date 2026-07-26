@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-from src.paths import SELECAO_TABELAS
+from src.config.paths import SELECAO_TABELAS
 
 CLASSIFICACOES_VALIDAS = frozenset({"util", "descartada", "pendente"})
 ESCOPOS_VALIDOS = frozenset({"incluida", "fora"})
@@ -72,7 +72,7 @@ class Tabela:
     # Conjunto de colunas que identifica uma linha, quando conhecido. Distinto
     # de pkey: pkey é a chave da entidade que o RelBench usa para ligar tabelas
     # (co_unidade), e quase nunca é única — rlEstabEquipamento tem uma linha por
-    # equipamento, não por estabelecimento. src/changes.py precisa da chave da
+    # equipamento, não por estabelecimento. src/etl/changes.py precisa da chave da
     # linha para distinguir modificação de remoção seguida de inserção.
     chave_natural: tuple[str, ...] = ()
     colunas: list[Coluna] = field(default_factory=list)

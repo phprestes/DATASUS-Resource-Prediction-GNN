@@ -21,8 +21,8 @@ projeto original, agora como consequência dessa definição.
 Ver docs/02-metodologia.md, seção 4, e docs/03-decisoes.md, D-08.
 
 Uso:
-    python -m src.changes                    # todas as transições disponíveis
-    python -m src.changes --tabelas rlEstabEquipamento
+    python -m src.etl.changes                    # todas as transições disponíveis
+    python -m src.etl.changes --tabelas rlEstabEquipamento
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ import duckdb
 import pyarrow as pa
 from tqdm import tqdm
 
-from src.paths import CHANGES_FOLDER, PRIMARY_FOLDER
-from src.schema import CNES_EXTRACT_COLUMNS, CNES_NATURAL_KEY
+from src.config.paths import CHANGES_FOLDER, PRIMARY_FOLDER
+from src.config.schema import CNES_EXTRACT_COLUMNS, CNES_NATURAL_KEY
 
 # Classificação de cada linha numa transição.
 INSERIDA = "inserida"
@@ -312,7 +312,7 @@ def taxa_de_mudanca(caminho: Path | None = None):
     caminho = caminho or caminho_resumo()
     if not caminho.exists():
         raise FileNotFoundError(
-            f"{caminho} não existe. Rode `python -m src.changes` antes."
+            f"{caminho} não existe. Rode `python -m src.etl.changes` antes."
         )
 
     df = pd.read_parquet(caminho)

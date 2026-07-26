@@ -10,7 +10,7 @@
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-%23F7931E.svg?style=for-the-badge&logo=scikit-learn&logoColor=white)
 ![Jupyter](https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=jupyter&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-DE5C2E?style=for-the-badge&logo=uv&logoColor=white)
-![pytest](https://img.shields.io/badge/pytest%2067%20testes-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 
 Bem-vindo ao repositório da Iniciação Científica sobre os microdados do **CNES**
 (Cadastro Nacional de Estabelecimentos de Saúde, DATASUS). O projeto combina
@@ -34,11 +34,6 @@ qualitativamente diferente de um hospital sem tomógrafo isolado a 40 km do pró
 serviço. Nenhum modelo que trate estabelecimentos como linhas independentes de uma
 tabela distingue os dois — e verificar se essa distinção tem efeito mensurável é o
 objeto do trabalho.
-
-A contribuição **não** é a rede neural de grafos: é a **diferença medida entre três
-abordagens** que enxergam o mesmo rótulo com informação estrutural diferente. A GNN é
-instrumento de medição, o que tem uma consequência incomum e deliberada — **resultado
-negativo é publicável**.
 
 Cinco notebooks sequenciais conduzem a investigação:
 
@@ -124,7 +119,7 @@ série inteira, e a execução é retomável.
 
 **O ponto de projeto que organiza o resto.** O arquivo
 [`docs/01-selecao-tabelas.md`](docs/01-selecao-tabelas.md) é a **fonte da verdade do
-schema**: [`src/schema.py`](src/schema.py) o lê em tempo de import e dele derivam as
+schema**: [`src/config/schema.py`](src/config/schema.py) o lê em tempo de import e dele derivam as
 tabelas ingeridas, as colunas materializadas, os tipos de destino e as chaves.
 **Editar aquele Markdown muda o pipeline** — não existe segunda lista em código para
 manter em sincronia, e a divergência entre duas listas paralelas foi exatamente o bug
@@ -169,9 +164,6 @@ prevalência 0,0553%:
   execução anterior essa comparação era o contrário.
 - **Relacional supera geográfica.** 0,0106 contra 0,0049 em AP, a um custo de treino
   dez vezes maior — 1.668 s contra 160 s.
-- **Ressalva honesta.** Três mudanças entraram entre esta execução e a anterior
-  (partição, correção do grafo e treino mais longo) e o **ablation que as separa está
-  pendente**. Leia D-32 antes de citar o número.
 
 Resultados brutos em [`docs/resultados/`](docs/resultados/); `make resultados` imprime
 a tabela do mais recente.
@@ -205,11 +197,6 @@ make verificar                               # testes + resumo do schema derivad
 make limpar-intermediario                    # apaga a camada 02, que é descartável
 ```
 
-*(O recorte espacial é a variável `RECORTE`, um prefixo de código IBGE: `make
-experimento RECORTE=355030` roda só a capital. O teto de memória é `MEM`, e existe
-porque o experimento estadual pica em 6,3 GB numa máquina de 9 GB — `make experimento`
-roda dentro de um cgroup, então um estouro mata o experimento e não a sua sessão.)*
-
 ---
 
 ## 🛡️ Boas Práticas e Qualidade de Código
@@ -220,7 +207,7 @@ roda dentro de um cgroup, então um estouro mata o experimento e não a sua sess
 - **Testes deliberadamente negativos.** Os 67 testes existem para que a partição
   temporal, o schema e o diff entre snapshots **falhem** em vez de produzir um número
   bonito e errado. Cada modo de falha coberto já ocorreu neste projeto ao menos uma vez.
-- **Decisões auditáveis.** 32 entradas numeradas em
+- **Decisões auditáveis.** 33 entradas numeradas em
   [`docs/03-decisoes.md`](docs/03-decisoes.md), cada uma com a evidência que a motivou
   e o que foi rejeitado. Quando o código parecer surpreendente, a razão está num `D-nn`.
 - **Gerenciamento moderno de pacotes.** Ecossistema `uv` com `pyproject.toml`, e lock
@@ -239,25 +226,29 @@ roda dentro de um cgroup, então um estouro mata o experimento e não a sua sess
 ├── 📂 docs/                      # O contrato do projeto — o código é downstream daqui
 │   ├── 01-selecao-tabelas.md     # FONTE DA VERDADE do schema; lida por schema.py
 │   ├── 02-metodologia.md         # desenho experimental detalhado
-│   ├── 03-decisoes.md            # 32 decisões numeradas, com evidência e o rejeitado
+│   ├── 03-decisoes.md            # 33 decisões numeradas, com evidência e o rejeitado
 │   ├── 04-dados-externos.md      # teste de admissão para fontes do SUS e do IBGE
 │   ├── 05-esboco-artigo.md       # estrutura do artigo, figuras e pendências
 │   ├── 📂 figuras/               # figuras do artigo, com convenção documentada
 │   ├── 📂 resultados/            # JSON de cada execução das trilhas
 │   └── DICIONARIO_DE_DADOS.pdf   # dicionário do DATASUS (descreve o Oracle)
-├── 📂 src/                       # Pipeline e modelagem
-│   ├── schema.py                 # parser estrito do doc de seleção
-│   ├── extract.py                # estágio 1 — download dos ZIPs
-│   ├── to_sql.py                 # estágio 2 — CSV para DuckDB
-│   ├── to_parquet.py             # estágio 3 — DuckDB para Parquet tipado
-│   ├── pipeline.py               # orquestra o ETL competência por competência
-│   ├── changes.py                # diff entre snapshots, eventos de mudança
-│   ├── splits.py                 # a partição temporal única
-│   ├── tasks.py                  # tabelas de rótulo: aquisição e quantidade
-│   ├── baselines.py              # trilha 1
-│   ├── graph.py                  # trilhas 2 e 3 — Database e grafo geográfico
-│   ├── gnn.py                    # encoders, decoder compartilhado, laço de treino
-│   └── metrics.py                # AP, AUC, MAP@k, RMSE/MAE
+├── 📂 src/                       # Três pacotes, separados por responsabilidade
+│   ├── 📂 config/                # Contrato: onde os dados moram e qual é o schema
+│   │   ├── paths.py              # localização das camadas e dos documentos
+│   │   └── schema.py             # parser estrito do doc de seleção
+│   ├── 📂 etl/                   # Os quatro estágios que produzem as camadas
+│   │   ├── extract.py            # 01_raw — download dos ZIPs
+│   │   ├── to_sql.py             # 02_intermediate — CSV para DuckDB
+│   │   ├── to_parquet.py         # 03_primary — DuckDB para Parquet tipado
+│   │   ├── changes.py            # 04_feature — diff entre snapshots
+│   │   └── pipeline.py           # orquestra, uma competência por vez
+│   └── 📂 ml/                    # Tarefa, grafos, modelos e avaliação
+│       ├── splits.py             # a partição temporal única
+│       ├── tasks.py              # tabelas de rótulo: aquisição e quantidade
+│       ├── baselines.py          # trilha 1
+│       ├── graph.py              # trilhas 2 e 3 — Database e grafo geográfico
+│       ├── gnn.py                # encoders, decoder compartilhado, treino
+│       └── metrics.py            # AP, AUC, MAP@k, RMSE/MAE
 ├── 📂 notebook/                  # Investigação e visualização
 │   ├── 00_analise_alvo.ipynb     # gate empírico bloqueante
 │   └── ...                       # perfil, relações, modelagem, recorte

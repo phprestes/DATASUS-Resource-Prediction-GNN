@@ -4,7 +4,7 @@ import requests
 from requests.exceptions import RequestException
 from typing import List
 from tqdm import tqdm
-from src.paths import RAW_FOLDER
+from src.config.paths import RAW_FOLDER
 
 BASE_URL = "https://cnes.datasus.gov.br/EstatisticasServlet?path=BASE_DE_DADOS_CNES_"
 

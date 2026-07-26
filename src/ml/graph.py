@@ -32,8 +32,8 @@ import pyarrow.compute as pc
 import pyarrow.dataset as ds
 from relbench.base import Database, Dataset, Table
 
-from src.paths import PRIMARY_FOLDER
-from src.schema import CNES_FKEY, CNES_PKEY, CNES_USEFUL_COLUMNS
+from src.config.paths import PRIMARY_FOLDER
+from src.config.schema import CNES_FKEY, CNES_PKEY, CNES_USEFUL_COLUMNS
 
 TABELA_RAIZ = "tbEstabelecimento"
 COL_ENTIDADE = "co_unidade"
@@ -118,15 +118,15 @@ def _marcos_da_particao(pasta: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
     Datas em que validação e teste começam, lidas da camada primária.
 
     O RelBench pede `val_timestamp` e `test_timestamp` como atributos do
-    `Dataset`, e `src/splits.py` já decide a divisão a partir das transições
+    `Dataset`, e `src/ml/splits.py` já decide a divisão a partir das transições
     existentes. Derivar daqui é o que mantém as duas coisas coerentes quando a
     série cresce — foi o motivo de as datas deixarem de ser literais.
 
-    Importado dentro da função porque `src.splits` importa `src.changes`, que
+    Importado dentro da função porque `src.ml.splits` importa `src.etl.changes`, que
     importa este módulo indiretamente pela camada de caminhos.
     """
-    from src.changes import periodos_disponiveis
-    from src.splits import particionar
+    from src.etl.changes import periodos_disponiveis
+    from src.ml.splits import particionar
 
     periodos = periodos_disponiveis(pasta)
     particao = particionar(periodos)
@@ -203,7 +203,7 @@ def colunas_minimas_para_grafo() -> dict[str, list[str]]:
     todas as colunas e chega a 5,3 GB, num ambiente de 9 GB. Com ela, carrega o
     que o grafo de fato usa.
     """
-    from src.gnn import escolher_categoria
+    from src.ml.gnn import escolher_categoria
 
     colunas = {TABELA_RAIZ: list(CNES_USEFUL_COLUMNS[TABELA_RAIZ])}
     for tabela in CNES_USEFUL_COLUMNS:
@@ -245,8 +245,8 @@ def montar_db(
     if not arquivos_raiz:
         raise ErroGrafo(
             f"nenhum {TABELA_RAIZ}.parquet encontrado em {pasta}. "
-            "Rode o ETL antes: python -m src.extract && python -m src.to_sql "
-            "&& python -m src.to_parquet"
+            "Rode o ETL antes: python -m src.etl.extract && python -m src.etl.to_sql "
+            "&& python -m src.etl.to_parquet"
         )
 
     raiz = _empilhar(
@@ -330,7 +330,7 @@ class CNESDataset(Dataset):
     ) -> None:
         self.recorte = recorte
         self.pasta = pasta
-        # Derivados da partição de src/splits.py sobre os snapshots que existem
+        # Derivados da partição de src/ml/splits.py sobre os snapshots que existem
         # na camada primária, não fixados no código: acrescentar uma competência
         # move validação e teste um ano adiante, e uma data cravada aqui deixaria
         # o RelBench avaliando num período que a partição chama de treino.
