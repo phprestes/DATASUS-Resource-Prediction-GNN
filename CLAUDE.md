@@ -10,13 +10,14 @@ Code comments, docstrings, prints and docs are in **Portuguese**. Keep new code 
 
 ## Read the docs first
 
-Five Markdown files in [docs/](docs/) are the project's contract. They are not summaries of the code — the code is downstream of them.
+Six Markdown files in [docs/](docs/) are the project's contract. They are not summaries of the code — the code is downstream of them.
 
 - **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/config/schema.py](src/config/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
 - **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
-- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 33 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 36 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
 - **[docs/04-dados-externos.md](docs/04-dados-externos.md)** — the six-item admission test for any source outside CNES. The binding rule: no external source enters as a label.
 - **[docs/05-esboco-artigo.md](docs/05-esboco-artigo.md)** — the article outline: what the paper claims, in what order, and what is still unwritten. Formal register, unlike the rest of the docs. Carries a figure manifest with eight slots whose captions are written and whose `![...]` lines sit commented until the file exists in [docs/figuras/](docs/figuras/) — naming convention and provenance in `docs/figuras/README.md`. The README describes the repository; this holds the argument.
+- **[docs/06-pipeline-hpc.md](docs/06-pipeline-hpc.md)** — the second pipeline (server-side, national scope, CUDA) and the technique × scope matrix it exists to measure. Read before touching anything under `hpc/`.
 - **[docs/DICIONARIO_DE_DADOS.pdf](docs/DICIONARIO_DE_DADOS.pdf)** — the DATASUS data dictionary (2025 edition), 155 pages. It describes the **Oracle** database, not the distributed CSV: the extraction exports a subset of the columns and renames some. Where the two disagree, the CSV wins. Read it with `pdftotext -layout`, never page by page.
 
 `docs/SelecaoTabelas_v1.pdf` and `_v2.pdf` are historical records, superseded by `01-selecao-tabelas.md`. `docs/CNES_GNN-2.pdf` is the original project proposal; the code has deliberately diverged from it (see D-01).
@@ -128,6 +129,22 @@ Measured on São Paulo. Figures below marked *(9 snapshots)* were taken before 2
 ## Memory is a hard constraint
 
 The machine has 9 GB and building the state-scope task table once crashed the user's IDE. D-23 cut the table from 3.22 GB to 0.317 GB and the peak from 4.87 GB to 3.37 GB. Code touching the task table must not materialise `co_unidade` as strings or copy the frame whole — use `TabelaTarefa.codigos()` and `Previsao.mascara_de_entidades()`. Negative sampling (200:1) applies to **training only**; validation and test stay complete, or the measured prevalence is fiction.
+
+## The two pipelines
+
+`src/` runs on the 9 GB machine; `hpc/` runs on the IME cluster (`brucutuvii`: 440 GB, 2× RTX A6000), national scope, CUDA. They are isolated on purpose (D-34) — separate ETL, graph assembly and training loop, separate data root via `IC_HPC_DATA`, and **no module of `src` imports from `hpc`**.
+
+`hpc` imports from `src` only what must be identical for the comparison to hold: `src.config.schema` (the schema contract), `src.ml.metrics`, `src.ml.splits`, `src.ml.artefatos`, `src.ml.baselines`.
+
+**Never run the `hpc-*` targets on the user's machine.** The code refuses below 64 GB of RAM, and that guard exists because an attempt to exercise the full path locally exhausted system and editor memory. Validate `hpc/` logic with the synthetic tests (`pytest tests/test_hpc_*.py -q`), never with the real primary layer.
+
+`--modo compativel | completo` is an experimental condition, not a code-compat switch: the compatible mode replicates the 9 GB limitations at any scope, which is what makes the four cells of the technique × scope matrix decomposable. Nothing has been run yet — the numbers land in D-36.
+
+## Trained models are artifacts
+
+Both pipelines write a package per run to `models/`, read by `src/ml/artefatos.py` (D-35): `state_dict` on CPU, manifest with provenance and machine profile, node/item index, training curve, and **per-example scores**. `make validar RUN=<dir>` recomputes AP, AUC and MAP@10 from the saved scores with no GPU and no `data/`, and checks them against the manifest.
+
+The index is not optional: the item embedding is position-indexed, so weights without the `unidades`/`itens` order load fine and score garbage. `salvar_execucao` refuses.
 
 ## Reproducing the experiment
 

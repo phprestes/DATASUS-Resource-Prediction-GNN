@@ -1,0 +1,22 @@
+# Dependências extras do pipeline do servidor: torch e PyG com CUDA.
+#
+# O requirements.txt da raiz é o lock do ambiente desta máquina, que é CPU-only.
+# No servidor as mesmas versões precisam vir do índice casado com a versão de CUDA
+# do driver — confira com `nvidia-smi` antes, e ajuste o `cu` do índice.
+#
+# Instalação, no servidor:
+#     uv pip install -e .
+#     uv pip install -r requirements-hpc.txt
+#
+# As três extensões compiladas do PyG não existem no PyPI em nenhuma variante, e o
+# índice delas também é casado com a versão do torch:
+#     uv pip install pyg-lib torch-scatter torch-sparse \
+#       --find-links https://data.pyg.org/whl/torch-2.9.0+cu124.html
+#
+# Se a instalação conflitar com o Debian do cluster, a saída recomendada pela wiki
+# do IME é o Apptainer: https://wiki.ime.usp.br/servicos:processamento
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+torch==2.9.1
+torch-geometric==2.7.0

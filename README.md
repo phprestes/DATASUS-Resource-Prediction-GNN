@@ -166,7 +166,14 @@ prevalência 0,0553%:
   dez vezes maior — 1.668 s contra 160 s.
 
 Resultados brutos em [`docs/resultados/`](docs/resultados/); `make resultados` imprime
-a tabela do mais recente.
+a tabela do mais recente, e `make modelos` lista os pacotes de modelo com escore por
+exemplo.
+
+**O que vem a seguir.** As limitações de memória que moldaram estes números — recorte
+estadual, grafo estático, projeção mínima, negativos subamostrados — foram levantadas no
+pipeline do servidor. A comparação passa a ser uma matriz de quatro células, técnica ×
+escopo, descrita em [`docs/06-pipeline-hpc.md`](docs/06-pipeline-hpc.md) e ainda sem
+execução (D-36).
 
 ---
 
@@ -207,7 +214,7 @@ make limpar-intermediario                    # apaga a camada 02, que é descart
 - **Testes deliberadamente negativos.** Os 67 testes existem para que a partição
   temporal, o schema e o diff entre snapshots **falhem** em vez de produzir um número
   bonito e errado. Cada modo de falha coberto já ocorreu neste projeto ao menos uma vez.
-- **Decisões auditáveis.** 33 entradas numeradas em
+- **Decisões auditáveis.** 36 entradas numeradas em
   [`docs/03-decisoes.md`](docs/03-decisoes.md), cada uma com a evidência que a motivou
   e o que foi rejeitado. Quando o código parecer surpreendente, a razão está num `D-nn`.
 - **Gerenciamento moderno de pacotes.** Ecossistema `uv` com `pyproject.toml`, e lock
@@ -226,9 +233,10 @@ make limpar-intermediario                    # apaga a camada 02, que é descart
 ├── 📂 docs/                      # O contrato do projeto — o código é downstream daqui
 │   ├── 01-selecao-tabelas.md     # FONTE DA VERDADE do schema; lida por schema.py
 │   ├── 02-metodologia.md         # desenho experimental detalhado
-│   ├── 03-decisoes.md            # 33 decisões numeradas, com evidência e o rejeitado
+│   ├── 03-decisoes.md            # 36 decisões numeradas, com evidência e o rejeitado
 │   ├── 04-dados-externos.md      # teste de admissão para fontes do SUS e do IBGE
 │   ├── 05-esboco-artigo.md       # estrutura do artigo, figuras e pendências
+│   ├── 06-pipeline-hpc.md        # pipeline do servidor e a matriz técnica × escopo
 │   ├── 📂 figuras/               # figuras do artigo, com convenção documentada
 │   ├── 📂 resultados/            # JSON de cada execução das trilhas
 │   └── DICIONARIO_DE_DADOS.pdf   # dicionário do DATASUS (descreve o Oracle)
@@ -252,7 +260,14 @@ make limpar-intermediario                    # apaga a camada 02, que é descart
 ├── 📂 notebook/                  # Investigação e visualização
 │   ├── 00_analise_alvo.ipynb     # gate empírico bloqueante
 │   └── ...                       # perfil, relações, modelagem, recorte
-├── 📂 tests/                     # 67 testes, todos negativos por desenho
+├── 📂 hpc/                       # Pipeline do servidor: nacional, CUDA, isolado
+│   ├── config/                   # raiz de dados própria, detecção de GPU, guardas
+│   ├── etl/                      # ETL paralelo e a camada 05 de grafos
+│   ├── ml/                       # tarefa nacional, grafo temporal, treino CUDA
+│   ├── Makefile                  # alvos do servidor
+│   └── README.md                 # como rodar no brucutuvii, do zero
+├── 📂 models/                    # Pacotes de modelo dos dois pipelines
+├── 📂 tests/                     # 101 testes, todos negativos por desenho
 ├── 📂 tools/                     # roda_experimento.py e o migrador de procedência
 ├── 📂 data/                      # (criado dinamicamente) nada versionado
 │   ├── 01_raw/                   # ZIPs de competência

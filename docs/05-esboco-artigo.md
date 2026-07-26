@@ -6,10 +6,12 @@ pendente. O README descreve o repositório; este documento organiza o argumento
 científico.
 
 As fontes primárias são os demais documentos de `docs/`: a metodologia detalhada em
-[`02-metodologia.md`](02-metodologia.md), o racional de cada escolha nas 33 entradas
+[`02-metodologia.md`](02-metodologia.md), o racional de cada escolha nas 36 entradas
 de [`03-decisoes.md`](03-decisoes.md), a especificação do schema em
 [`01-selecao-tabelas.md`](01-selecao-tabelas.md) e o critério de admissão de fontes
-externas em [`04-dados-externos.md`](04-dados-externos.md).
+externas em [`04-dados-externos.md`](04-dados-externos.md). O segundo pipeline, que
+levanta as limitações de hardware, está descrito em
+[`06-pipeline-hpc.md`](06-pipeline-hpc.md).
 
 **Estado da redação.** As seções 1, 3, 4, 5 e 7 dispõem de conteúdo medido e podem
 ser redigidas na forma final. A seção 2 (trabalhos relacionados) constitui a
@@ -30,10 +32,10 @@ a linha de inclusão pronta, comentada até que o arquivo exista.
 | 2 | As três trilhas diante do mesmo rótulo | 4.2 | diagrama a desenhar | pendente |
 | 3 | Série de eventos de aquisição por transição | 3.4 | `notebook/00_analise_alvo` | pendente |
 | 4 | Cobertura de coordenada por competência | 3.4 | `notebook/00_analise_alvo` | pendente |
-| 5 | Curvas de precisão–revocação das cinco previsões | 5.2 | `docs/resultados/*.json` | pendente |
-| 6 | MAP@10 por modelo, com intervalo entre execuções | 5.2 | `docs/resultados/*.json` | pendente |
+| 5 | Curvas de precisão–revocação das cinco previsões | 5.2 | `models/*/previsoes/` | desbloqueada por D-35 |
+| 6 | MAP@10 por modelo, com intervalo entre execuções | 5.2 | `models/*/previsoes/` | pendente |
 | 7 | Recorte do grafo relacional em torno de um estabelecimento | 4.2 | `notebook/02_relacoes` | pendente |
-| 8 | Distribuição espacial dos estabelecimentos posicionáveis | 5.4 | `notebook/04_recorte_e_dados_externos` | pendente |
+| 8 | Distribuição espacial dos estabelecimentos posicionáveis | 5.5 | `notebook/04_recorte_e_dados_externos` | pendente |
 
 | # | Tabela | Seção | Situação |
 |---|---|---|---|
@@ -41,7 +43,8 @@ a linha de inclusão pronta, comentada até que o arquivo exista.
 | 2 | As três trilhas e o que cada uma isola | 4.2 | escrita |
 | 3 | Partição temporal | 4.3 | escrita |
 | 4 | Desempenho comparado das cinco previsões | 5.1 | escrita |
-| 5 | Comparação entre execuções sucessivas | 5.3 | escrita |
+| 5 | Comparação entre execuções sucessivas | 5.4 | escrita |
+| 8 | Matriz técnica × escopo | 5.3 | pendente de execução (D-36) |
 | 6 | Hiperparâmetros e semente | 4.6 | pendente |
 | 7 | Modos de falha identificados e corrigidos | 4.7 | escrita |
 
@@ -134,7 +137,7 @@ resultado a reportar como fato estabelecido. A decisão está registrada em D-02
 2. Medição, sobre dez anos de registro no estado de São Paulo, de que a estrutura
    relacional supera tanto o modelo tabular quanto a vizinhança geográfica.
 3. Catálogo de modos de falha metodológica identificados no percurso, com o efeito de
-   cada um sobre o número reportado (seção 4.7 e as 33 entradas de
+   cada um sobre o número reportado (seção 4.7 e as 36 entradas de
    [`03-decisoes.md`](03-decisoes.md)).
 
 ---
@@ -421,7 +424,28 @@ Três leituras decorrem da Tabela 4:
    interpretação de que a proximidade física capturaria quase todo o sinal
    estrutural; com o grafo relacional corrigido, essa interpretação não se sustenta.
 
-### 5.3 Comparação entre execuções sucessivas
+### 5.3 Matriz técnica × escopo
+
+As limitações de hardware descritas na seção 7 foram levantadas em um segundo pipeline,
+executado em servidor de 440 GB com GPU (D-34). Como técnica e escopo deixam de estar
+amarrados, o trabalho passa a reportar quatro células em vez de um número:
+
+**Tabela 8 — Matriz técnica × escopo.** Pendente de execução; ver D-36.
+
+| | Escopo São Paulo | Escopo nacional |
+|---|---|---|
+| **Técnica limitada** — grafo estático em 201701, projeção mínima, negativos 200:1, um passo por época | célula A, reproduz a Tabela 4 | célula B |
+| **Técnica completa** — grafo por transição, atributo e peso na aresta, negativos completos | célula C | célula D |
+
+A decomposição é o objetivo: **B menos A** isola o efeito do escopo com a técnica
+constante, **C menos A** isola o efeito da técnica com o escopo constante, e a célula A
+serve de controle — rodada no servidor, deve reproduzir a Tabela 4 dentro do ruído de
+semente, e qualquer divergência aponta para o código novo em lugar do hardware.
+
+A célula C responde diretamente à questão levantada em 7: quanto das limitações de
+memória custou em desempenho, medido sem trocar de amostra.
+
+### 5.4 Comparação entre execuções sucessivas
 
 **Tabela 5 — Comparação entre execuções.** Coluna esquerda: teste 2025, série de nove
 competências (D-26). Coluna direita: teste 2026, série de dez competências (D-32).
@@ -439,7 +463,7 @@ abordagens estruturais apresentaram variação substancial, com a relacional mai
 dobrando em AP. A interpretação dessa diferença exige o experimento de ablação
 descrito em 6.1.
 
-### 5.4 Viés do subconjunto de avaliação
+### 5.5 Viés do subconjunto de avaliação
 
 <!-- ![Distribuição espacial dos posicionáveis](figuras/fig-08-distribuicao-espacial.png) -->
 
@@ -495,14 +519,19 @@ o teste 2025 com o grafo corrigido.
   vazamento, descrevendo uma rede nove anos anterior ao conjunto de teste. Os
   atributos de nó derivam do mesmo corte, e o recorte contava 80.073 estabelecimentos
   em 2017 contra 146.679 na série completa, de modo que **45% dos nós ingressam com
-  vetor de atributos vazio**.
+  vetor de atributos vazio**. *Levantada no pipeline do servidor por um grafo por
+  transição; efeito a medir na célula C da Tabela 8.*
 - **O grafo relacional é topologia sem atributo.** A projeção que viabiliza a
   montagem em 9 GB de memória retém duas colunas por tabela filha, de forma que 298
   das 368 colunas aprovadas nas tabelas de fato permanecem fora do grafo: as arestas
-  não carregam peso nem atributo.
+  não carregam peso nem atributo. *Levantada no modo completo, com vocabulário por
+  coluna e peso agregado por par.*
 - **Um estado e uma transição de avaliação.** A generalização para outras unidades
   federativas não foi verificada, e o resultado repousa sobre uma única transição de
-  teste.
+  teste. *O recorte nacional entra nas células B e D.*
+- **As limitações acima são de hardware, não de método.** O trabalho as reporta como
+  tal, e a Tabela 8 existe para quantificar o que cada uma custou — em lugar de
+  deixá-las como ressalva qualitativa.
 - **A inversão do resultado de MAP@10 não está decomposta.** Ver seção 6.1.
 
 ---
@@ -543,4 +572,5 @@ A redigir em conjunto com a seção 2, cobrindo os cinco blocos ali especificado
 - [ ] Figuras 1 a 8 geradas e inseridas (remover o comentário da linha de inclusão).
 - [ ] Tabela 6, de hiperparâmetros e semente.
 - [ ] Revisão do resumo após a conclusão da ablação.
+- [ ] Execução das quatro células da Tabela 8 no servidor, e a leitura da decomposição.
 - [ ] Definição do veículo de submissão e adequação ao formato exigido.

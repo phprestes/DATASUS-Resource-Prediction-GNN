@@ -1406,3 +1406,159 @@ notebooks e os dois scripts de `tools/` foram atualizados.
 reexportando os nomes antigos. Dois caminhos válidos para o mesmo módulo é o tipo
 de ambiguidade que a reorganização existe para eliminar, e um repositório de
 pesquisa com um único consumidor não tem por que carregar essa dívida.
+
+## D-34 — Dois pipelines isolados, e a matriz técnica × escopo
+
+**Data:** 2026-07-26 · **Status:** aplicado, sem execução ainda
+
+**Contexto.** Todo o projeto foi construído sob 9 GB de RAM, e quatro decisões trocaram
+informação por viabilidade: recorte estadual em vez de nacional (D-21), grafo estático
+cortado em 201701 com 45% dos nós sem feature (D-25), projeção mínima que deixa 298 das
+368 colunas `util` fora do grafo (D-23) e treino com negativos a 200:1, validação
+amostrada e um único passo de gradiente por época (D-23). Com acesso ao cluster do IME —
+440 GB de RAM e duas RTX A6000 — nenhuma delas é necessária.
+
+**Decisão.** Um segundo pipeline, `hpc/`, isolado do primeiro. `src/` continua sendo o
+que roda no notebook, porque é onde a análise exploratória acontece; `hpc/` roda no
+servidor, no recorte nacional, com CUDA.
+
+Isolado significa: ETL, montagem de grafo e laço de treino próprios, raiz de dados
+própria (`IC_HPC_DATA`, com recusa a qualquer caminho dentro do repositório), e nenhum
+import de `hpc` dentro de `src`. Uma mudança feita para o servidor não pode quebrar a
+execução local.
+
+### O que é compartilhado, e por quê
+
+| Compartilhado | Por que não pode divergir |
+|---|---|
+| `src.config.schema` | `01-selecao-tabelas.md` é a fonte única da verdade; duplicar o parser recriaria o bug de D-05 |
+| `src.ml.metrics` | AP, AUC e MAP@k têm de ser a mesma implementação |
+| `src.ml.splits` | mesma regra de partição |
+| `src.ml.artefatos` | mesmo formato de modelo salvo (D-35) |
+| `src.ml.baselines` | a trilha 1 não tem gargalo de GPU; reimplementá-la criaria outra verdade sobre o piso |
+
+O ETL do servidor também reutiliza os estágios locais, e aqui isso é requisito: os
+arquivos do CNES já são nacionais, o recorte só age na modelagem, e se as duas camadas
+primárias divergissem a matriz abaixo compararia dado em vez de técnica.
+`--conferir-contra` compara contagem de linhas tabela por tabela; medido em 202601, as
+duas camadas são idênticas nas 44 tabelas.
+
+### A matriz que passa a ser reportada
+
+`--modo compativel | completo` desamarra técnica de escopo:
+
+| | Escopo São Paulo | Escopo nacional |
+|---|---|---|
+| **Técnica limitada** | célula A — reproduz D-32 | célula B |
+| **Técnica completa** | célula C | célula D |
+
+- **A** é controle: rodada no servidor, deve reproduzir D-32 dentro do ruído de
+  semente. Se não reproduzir, a diferença está no código novo, e não no hardware nem no
+  escopo — é a única checagem que separa as três coisas.
+- **B** isola o efeito do escopo, com técnica constante.
+- **C** isola o efeito da técnica, com escopo constante. É a extensão do grafo temporal
+  medida em São Paulo, diretamente comparável a D-32.
+- **D** é o resultado de referência.
+
+O modo compatível replica de propósito as quatro limitações. Não é compatibilidade de
+código: é condição experimental, e sem ela a diferença entre A e D não seria
+decomponível.
+
+### Guardas, e a que preço foram aprendidas
+
+- **Recusa de CPU.** O cluster não tem escalonador para rejeitar job mal dimensionado,
+  então a recusa mora no programa: cair em CPU em silêncio daria uma execução de dias e
+  um número que pareceria comparável.
+- **Recusa de máquina pequena.** Abaixo de 64 GB o pipeline não roda. A guarda foi
+  acrescentada **depois** de uma tentativa de exercitar o caminho completo na estação de
+  trabalho esgotar a memória do sistema e do editor do usuário. A validação da lógica
+  fora do servidor é feita com dado sintético, em `tests/test_hpc_*.py`.
+- **Raiz de dados fora do repositório**, senão o servidor sobrescreveria a camada
+  primária do notebook.
+
+### Estado
+
+O caminho está verificado; os números, não. ETL de uma competência no servidor
+reproduz a camada do notebook linha por linha, e grafo, treino e artefato têm cobertura
+sintética. **Nenhuma das quatro células foi executada** — elas entram em D-36.
+
+### Descartado
+
+Um pipeline só, com perfil de execução escolhendo recorte e dispositivo. Menos
+duplicação, mas um bug introduzido para o servidor chegaria ao notebook, e a máquina
+onde a análise exploratória acontece é justamente a que não pode quebrar.
+
+## D-35 — Modelo treinado é artefato, não subproduto
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+**Contexto.** O experimento media e descartava. `tools/roda_experimento.py` treinava,
+calculava as métricas, escrevia um JSON com os agregados e perdia o modelo junto com o
+processo. Três consequências, todas encontradas na prática:
+
+1. As figuras 5 e 6 do esboço do artigo — curva de precisão–revocação e MAP@10 por
+   modelo — eram **impossíveis de gerar**, porque exigem escore por exemplo e
+   `docs/resultados/` só guarda métrica agregada.
+2. Reavaliar sobre outro subconjunto exigia repetir o treino.
+3. Com o pipeline do servidor (D-34), o modelo passaria a ser treinado numa máquina à
+   qual o autor não tem acesso permanente, e o número chegaria sem nada que o
+   sustentasse.
+
+**Decisão.** Um diretório por execução em `models/`, escrito e lido por
+`src/ml/artefatos.py`, **comum aos dois pipelines**:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `manifesto.json` | hiperparâmetros, escopo, modo, partição, corte do grafo, métricas, commit, árvore suja, versões, perfil da máquina |
+| `modelo.pt` | `state_dict` com tensores em CPU |
+| `indice.parquet` | ordem de `unidades` e `itens` |
+| `historico.parquet` | curva de treino por época |
+| `previsoes/teste.parquet` | escore por exemplo: entidade, item, rótulo, escore |
+| `previsoes/teste-compacto.parquet` | top-20 por entidade mais amostra do resto |
+
+### O índice não é opcional
+
+O embedding de item é indexado por **posição**. Um `state_dict` sem a ordem de
+`unidades` e `itens` carrega sem erro nenhum e pontua lixo — a mesma classe de erro que
+`IndicePares` existe para evitar, agora atravessando máquinas. `salvar_execucao` recusa
+gravar pesos sem índice, e há teste para isso.
+
+Um caso concreto que a regra pegou: a trilha 3 alcança só os posicionáveis, e portanto
+tem outra ordem de `unidades` que a trilha 2. Salvar a ordem do experimento em vez da do
+modelo produziria um pacote silenciosamente errado.
+
+### Validação fora da máquina que treinou
+
+`recomputar_metricas()` recalcula AP, AUC e MAP@10 a partir das previsões salvas, **sem
+GPU e sem `data/`**; `conferir()` compara com o manifesto e lista divergências.
+`make validar RUN=<pacote>` é o atalho. Quem recebe o pacote verifica o número em vez de
+aceitá-lo por confiança — que é precisamente o modo de falha de D-11.
+
+Verificado numa execução real: as três baselines na capital geraram pacote, e
+`make validar` recomputou AP 0,00448 / AUC 0,701 / MAP@10 0,3049 conferindo com o
+manifesto.
+
+### O que fica fora do git
+
+`models/.gitignore` versiona **só** o manifesto. Pesos e previsões ficam de fora: a
+previsão do recorte nacional passa de meio gigabyte, e nada ali é fonte da verdade —
+tudo é reproduzível a partir do commit registrado no manifesto.
+
+### Descartado
+
+Guardar o modelo e não as previsões. Seria menor, mas reinferir exige o grafo e portanto
+a camada primária, que é justamente o que não existe na máquina de quem só quer olhar o
+resultado. O escore por exemplo é o que torna o pacote autossuficiente.
+
+## D-36 — Resultado da matriz técnica × escopo
+
+**Data:** — · **Status:** pendente
+
+Reservada para as quatro células de D-34, quando executadas no servidor. Deve trazer,
+para cada célula, a tabela pareada com AP, AUC e MAP@10, o custo de treino, o pico de
+memória, e a leitura da decomposição: quanto do resultado vem da técnica e quanto vem
+do escopo.
+
+A primeira coisa a verificar é a célula A contra D-32. Divergência ali invalida a
+leitura das outras três, e aponta para o código novo em vez do hardware.
+
