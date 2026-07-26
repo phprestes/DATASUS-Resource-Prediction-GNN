@@ -1,0 +1,88 @@
+{
+  "experimento": "aquisicao de equipamento — tres trilhas",
+  "data": "2026-07-25",
+  "recorte": "35",
+  "recorte_descricao": "estado de Sao Paulo, 645 municipios",
+  "alvo": "rlEstabEquipamento.co_equipamento",
+  "snapshots": ["201701", "201801", "201901", "202001", "202101", "202201", "202301", "202401", "202501"],
+  "particao": {
+    "treino": ["201801", "201901", "202001", "202101", "202201"],
+    "validacao": ["202301", "202401"],
+    "teste": ["202501"],
+    "fim_do_treino": "202201",
+    "corte_do_grafo": "201701"
+  },
+  "tarefa": {
+    "linhas": 37072917,
+    "positivos": 34571,
+    "memoria_gb": 0.31,
+    "negativos_por_positivo_no_treino": 200,
+    "observacao": "validacao e teste completos; so o treino e subamostrado (D-23)"
+  },
+  "grafo_relacional": {
+    "tipos_no": 25,
+    "relacoes": 48,
+    "segundos_montagem": 20,
+    "maiores_arestas": {
+      "tbCargaHorariaSus": 238534,
+      "rlEstabEquipamento": 200764,
+      "tbEstabHorarioAtend": 141564,
+      "rlEstabInstFisiAssist": 138752,
+      "rlEstabColetaSelRejeito": 129225,
+      "rlEstabProgFundo": 99997,
+      "rlEstabAtendPrestConv": 94249,
+      "rlEstabServicoApoio": 87387
+    }
+  },
+  "grafo_geografico": {
+    "nos": 117146,
+    "cobertura_pct": 85.7,
+    "arestas": 1773917,
+    "k": 10,
+    "segundos_montagem": 12
+  },
+  "treino": {
+    "gnn_relacional": {"segundos": 1192, "melhor_epoca": 47, "ap_validacao": 0.00505},
+    "gnn_geografica": {"segundos": 156, "melhor_epoca": 23, "ap_validacao": 0.00434}
+  },
+  "teste_completo": {
+    "n": 11671480,
+    "positivos": 4994,
+    "prevalencia": 0.000428,
+    "modelos": {
+      "gnn_relacional":    {"average_precision": 0.004281, "auc_roc": 0.818405, "map@10": 0.213694, "n": 11671480},
+      "gnn_geografica":    {"average_precision": 0.003775, "auc_roc": 0.809534, "map@10": 0.207748, "n": 9818382,
+                            "observacao": "so avalia os posicionaveis; 1853098 pares descartados"},
+      "gbdt_geral":        {"average_precision": 0.002476, "auc_roc": 0.741391, "map@10": 0.253111, "n": 11671480},
+      "popularidade_item": {"average_precision": 0.001813, "auc_roc": 0.730048, "map@10": 0.296148, "n": 11671480},
+      "persistencia":      {"average_precision": 0.000428, "auc_roc": 0.500000, "map@10": 0.028276, "n": 11671480}
+    }
+  },
+  "teste_pareado": {
+    "descricao": "restrito aos 117146 estabelecimentos posicionaveis; e a tabela que vale (D-15)",
+    "n": 9818382,
+    "positivos": 4974,
+    "prevalencia": 0.000507,
+    "modelos": {
+      "gnn_relacional":    {"average_precision": 0.004780, "auc_roc": 0.811229, "map@10": 0.213346},
+      "gnn_geografica":    {"average_precision": 0.003775, "auc_roc": 0.809534, "map@10": 0.207748},
+      "gbdt_geral":        {"average_precision": 0.002795, "auc_roc": 0.741829, "map@10": 0.252013},
+      "popularidade_item": {"average_precision": 0.002147, "auc_roc": 0.729254, "map@10": 0.295729},
+      "persistencia":      {"average_precision": 0.000507, "auc_roc": 0.500000, "map@10": 0.035380}
+    }
+  },
+  "verificacoes": {
+    "persistencia_ap_igual_prevalencia": true,
+    "persistencia_auc_igual_meio": true,
+    "prevalencia_pareada_maior": "0.000428 -> 0.000507, +18%: o subconjunto posicionavel nao e aleatorio"
+  },
+  "ambiente": {
+    "pico_rss_gb": 5.13,
+    "ram_total_gb": 9,
+    "python": "3.12.12",
+    "torch": "2.9.1",
+    "torch_geometric": "2.7.0",
+    "relbench": "2.1.1"
+  },
+  "reproduzir": "python -m tools.roda_experimento"
+}

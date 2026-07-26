@@ -853,3 +853,91 @@ apenas arestas com data `≤ t`. É o que o RelBench faz com `time_col` e
 amostragem temporal de vizinhança. Custa uma reamostragem do grafo por transição
 e não cabia nesta iteração. Fica registrado como a extensão de maior valor para
 as trilhas estruturais.
+
+---
+
+## D-26 — Resultado final: as três trilhas
+
+**Data:** 2026-07-25 · **Status:** medido
+
+Recorte estadual, transição de teste 2025. A tabela que vale é a **pareada**, sobre
+os 117.146 estabelecimentos posicionáveis, porque só ela compara as três trilhas
+no mesmo conjunto de nós (D-15). São 9.818.382 exemplos e 4.974 positivos.
+
+| Modelo | AP | AUC-ROC | MAP@10 | Trilha |
+|---|---|---|---|---|
+| `gnn_relacional` | **0,00478** | **0,811** | 0,2133 | 2 |
+| `gnn_geografica` | 0,00378 | 0,810 | 0,2077 | 3 |
+| `gbdt_geral` | 0,00280 | 0,742 | 0,2520 | 1 |
+| `popularidade_item` | 0,00215 | 0,729 | **0,2957** | 1 |
+| `persistencia` | 0,00051 | 0,500 | 0,0354 | 1 |
+
+### A régua continua funcionando
+
+`persistencia` devolve AP exatamente igual à prevalência (0,000507) e AUC
+exatamente 0,500, agora no subconjunto pareado. É a verificação de que o
+arcabouço de avaliação não se quebrou ao mudar de recorte e de subconjunto.
+
+### A estrutura acrescenta — em AP e AUC
+
+As duas GNNs superam com folga as três baselines nas duas métricas globais. A
+relacional dá **9,4 vezes a prevalência** em AP, contra 5,5 do gradient boosting
+tabular; em AUC, 0,811 contra 0,742.
+
+Isso responde afirmativamente à pergunta de pesquisa **nessa dimensão**: a
+estrutura da rede carrega informação sobre onde recursos serão adquiridos, além
+do que os atributos isolados do estabelecimento explicam.
+
+### Mas as duas GNNs perdem em MAP@10
+
+E perdem para o modelo mais simples de todos. `popularidade_item`, que só sabe
+com que frequência cada tipo de equipamento é adquirido e ignora completamente o
+estabelecimento, chega a 0,296 contra 0,213 da GNN relacional.
+
+**A explicação mais provável, e é testável.** As duas métricas medem dimensões
+diferentes do mesmo escore:
+
+- **AP e AUC** são globais: ordenam todos os pares (estabelecimento, equipamento)
+  juntos. Acertar *quais estabelecimentos* adquirem muito já melhora bastante
+  essa ordenação, e é justamente o que o grafo informa bem.
+- **MAP@10** fixa o estabelecimento e ordena os 99 equipamentos dentro dele. O
+  componente "qual estabelecimento" some por construção, e sobra apenas "qual
+  equipamento" — que é exatamente o que `popularidade_item` modela e a GNN
+  aparentemente não aprendeu.
+
+Ou seja: as GNNs aprenderam a dimensão **estabelecimento** e não a dimensão
+**item**. O decoder concatena o embedding do nó com um embedding aprendido do
+item e deveria capturar as duas, mas com 500 mil pares por época e parada em 47
+épocas provavelmente não convergiu no componente de item.
+
+**Consequência prática, não conclusão fechada.** O próximo experimento óbvio é um
+modelo combinado — escore da GNN somado ao log-odds da popularidade do item — que
+deve vencer nas duas métricas. Se vencer, confirma o diagnóstico; se não,
+refuta-o. Antes disso, nada aqui autoriza dizer que a estrutura é inútil para
+ranquear dentro do estabelecimento, apenas que **esta** GNN não a explorou.
+
+### Relacional supera geográfica, mas por pouco
+
+AP de 0,00478 contra 0,00378 favorece a trilha 2. Em AUC, porém, elas empatam
+(0,811 contra 0,810). A estrutura relacional inteira — 25 tipos de nó e 48
+relações — rende pouco acima do que a simples proximidade física já entrega, o
+que é um resultado em si: a maior parte do sinal estrutural parece ser
+capturável por vizinhança geográfica, que é muito mais barata de montar.
+
+Custo, para dimensionar: 1.192 segundos de treino na relacional contra 156 na
+geográfica.
+
+### O subconjunto posicionável não é aleatório
+
+A prevalência sobe de 0,0428% no conjunto completo para **0,0507%** no
+subconjunto pareado — 18% maior. Estabelecimentos com coordenada registrada
+adquirem mais equipamento que a média. É o viés de seleção que D-15 e D-17
+mandavam reportar, agora quantificado, e é a razão de a comparação pareada ser
+obrigatória: sem ela, a trilha 3 pareceria melhor do que é apenas por avaliar
+numa população mais fácil.
+
+### O que este resultado não diz
+
+Não diz que o modelo identifica escassez. Diz que aquisição de equipamento é
+parcialmente previsível a partir da estrutura da rede. A ponte entre as duas
+coisas continua sendo a inferência declarada em D-02, e continua sendo hipótese.

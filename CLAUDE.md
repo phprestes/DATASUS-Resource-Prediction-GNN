@@ -14,7 +14,7 @@ Four Markdown files in [docs/](docs/) are the project's contract. They are not s
 
 - **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/schema.py](src/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
 - **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
-- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 24 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 26 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
 
 `docs/SelecaoTabelas_v1.pdf` and `_v2.pdf` are historical records, superseded by `01-selecao-tabelas.md`. `docs/CNES_GNN-2.pdf` is the original project proposal; the code has deliberately diverged from it (see D-01).
 
@@ -96,6 +96,8 @@ Measured on the nine annual snapshots, São Paulo. These constrain what is worth
 - **Target.** `rlEstabEquipamento` yields 34,571 acquisition events across the eight transitions at state scope; `rlEstabComplementar` (beds) yields 688 in the capital alone. That is why the target moved (D-01, D-18).
 - **Prevalence is 0.047%** at state scope — 73M candidates for 34k events. Two candidate-space restrictions were tested and rejected (D-19). Don't propose a third without measuring first. **MAP@k is the headline metric**, and D-24 shows why in practice: AP and MAP@10 rank the baselines differently.
 - **The bar to beat is MAP@10 = 0.296** (`popularidade_item`), not the persistence floor. Persistence returns AP exactly equal to prevalence and AUC exactly 0.500 — if it ever doesn't, the harness is broken (D-24).
+- **Results are in** (D-26, paired on 117k positionable establishments): `gnn_relacional` AP 0.00478 / MAP@10 0.213; `gnn_geografica` 0.00378 / 0.208; `gbdt_geral` 0.00280 / 0.252; `popularidade_item` 0.00215 / **0.296**; `persistencia` 0.00051 / 0.035. **The GNNs win AP and AUC and lose MAP@10** — they learned the establishment dimension, not the item dimension. The next experiment is a combined score (GNN + item-popularity log-odds); don't propose architecture changes before running it.
+- **The paired table is the one that counts.** Prevalence is 0.0507% on positionable establishments vs 0.0428% overall — the subset is 18% richer in positives, so unpaired comparison flatters track 3.
 - **Change rate is flat**: 0.082–0.112 per year, median 0.094, no pandemic spike. Annual density is settled (D-10).
 - **Coordinates cover 85.7%** at state scope, 75.0% in the capital. D-17 said 57% — that was measured on six of nine snapshots and is superseded by D-22.
 - **The schema drifts.** Three of 44 tables have columns that vanish and return, with 201901 the anomalous competência. Reading several Parquet files directly via DuckDB needs `union_by_name=true` (D-20).
@@ -103,6 +105,15 @@ Measured on the nine annual snapshots, São Paulo. These constrain what is worth
 ## Memory is a hard constraint
 
 The machine has 9 GB and building the state-scope task table once crashed the user's IDE. D-23 cut the table from 3.22 GB to 0.317 GB and the peak from 4.87 GB to 3.37 GB. Code touching the task table must not materialise `co_unidade` as strings or copy the frame whole — use `TabelaTarefa.codigos()` and `Previsao.mascara_de_entidades()`. Negative sampling (200:1) applies to **training only**; validation and test stay complete, or the measured prevalence is fiction.
+
+## Reproducing the experiment
+
+`python -m tools.roda_experimento` runs all three tracks and writes
+`docs/resultados/{date}-trilhas-{recorte}.json` incrementally. ~45 min, 5.1 GB peak.
+`--pular-gnn` stops after the baselines. The graph cutoff must be
+`particao.antes_de_todos_os_rotulos`, never `fim_do_treino` — the latter puts the
+label inside the graph (D-25), and `grafo_relacional_para_data` refuses the call
+without the parameter for that reason.
 
 ## Notebooks
 

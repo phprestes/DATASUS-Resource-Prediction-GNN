@@ -182,10 +182,81 @@ capacidade preditiva.
 
 ## 3. Resultados
 
-Conjunto de teste: transição 2025, 11.671.480 exemplos, 4.994 positivos,
-prevalência 0,0428%.
+A tabela que vale é a **pareada**: só ela compara as três trilhas sobre o mesmo
+conjunto de nós. A trilha 3 alcança apenas os 117.146 estabelecimentos com
+coordenada, e comparar métricas em populações diferentes mediria diferença de
+amostra, não de estrutura.
 
-<!-- RESULTADOS -->
+**Teste 2025 · 117.146 estabelecimentos · 9.818.382 exemplos · 4.994 positivos ·
+prevalência 0,0507%**
+
+| Modelo | Trilha | AP | AUC-ROC | MAP@10 |
+|---|---|---|---|---|
+| `gnn_relacional` | 2 | **0,00478** | **0,811** | 0,2133 |
+| `gnn_geografica` | 3 | 0,00378 | 0,810 | 0,2077 |
+| `gbdt_geral` | 1 | 0,00280 | 0,742 | 0,2520 |
+| `popularidade_item` | 1 | 0,00215 | 0,729 | **0,2957** |
+| `persistencia` | 1 | 0,00051 | 0,500 | 0,0354 |
+
+Custo: 1.192 s de treino na trilha 2, 156 s na trilha 3. Grafo relacional com 25
+tipos de nó e 48 relações; grafo geográfico com 1.773.917 arestas.
+
+### O arcabouço está calibrado
+
+`persistencia` devolve AP **exatamente** igual à prevalência (0,000507) e AUC
+**exatamente** 0,500. Não é coincidência — é o que a construção exige, e serve de
+verificação de que o pipeline de avaliação não se quebrou ao mudar de recorte e
+de subconjunto. Se um dia divergir, o erro está no arcabouço, não no modelo.
+
+### A estrutura acrescenta — em AP e AUC
+
+As duas GNNs superam com folga as três baselines nas métricas globais. A
+relacional entrega **9,4 vezes a prevalência** em AP, contra 5,5 do gradient
+boosting tabular; em AUC, 0,811 contra 0,742.
+
+Nessa dimensão a resposta à pergunta de pesquisa é **sim**: a estrutura da rede
+carrega informação sobre onde recursos serão adquiridos, além do que os atributos
+isolados do estabelecimento explicam.
+
+### E perde em MAP@10 — para o modelo mais simples de todos
+
+`popularidade_item` chega a 0,296 contra 0,213 da GNN relacional. Esse modelo só
+sabe com que frequência cada tipo de equipamento é adquirido; ignora
+completamente o estabelecimento.
+
+A explicação mais provável é que as duas métricas medem dimensões diferentes do
+mesmo escore:
+
+- **AP e AUC** são globais e ordenam todos os pares juntos. Acertar *quais
+  estabelecimentos* adquirem muito já melhora bastante essa ordenação — e é
+  exatamente o que o grafo informa bem.
+- **MAP@10** fixa o estabelecimento e ordena os 99 equipamentos dentro dele. O
+  componente "qual estabelecimento" some por construção, e sobra apenas "qual
+  equipamento", que é o que `popularidade_item` modela.
+
+Ou seja: as GNNs aprenderam a dimensão **estabelecimento** e não a dimensão
+**item**. O decoder concatena o embedding do nó com um embedding aprendido do
+item e deveria capturar as duas, mas parou em 47 épocas com 500 mil pares por
+época — provavelmente sem convergir no componente de item.
+
+Isso é diagnóstico, não conclusão fechada. O experimento que decide é um modelo
+combinado, descrito na seção 7.
+
+### Relacional supera geográfica, mas por pouco
+
+AP de 0,00478 contra 0,00378 favorece a trilha 2, mas em AUC elas empatam (0,811
+contra 0,810). A estrutura relacional inteira rende pouco acima do que a simples
+proximidade física entrega, a um custo de treino **oito vezes maior**. É
+resultado em si: a maior parte do sinal estrutural parece capturável por
+vizinhança geográfica.
+
+### O subconjunto posicionável não é aleatório
+
+A prevalência sobe de 0,0428% no conjunto completo para 0,0507% no pareado — 18%
+maior. Estabelecimentos com coordenada registrada adquirem mais equipamento que a
+média. É o viés de seleção que a metodologia mandava reportar, agora
+quantificado, e é a razão de a comparação pareada ser obrigatória: sem ela, a
+trilha 3 pareceria melhor do que é apenas por avaliar numa população mais fácil.
 
 ---
 
@@ -332,6 +403,21 @@ jupyter lab notebook/
 `00_analise_alvo` é **ponto de decisão bloqueante** — as trilhas não devem rodar
 antes dele estar executado e com os vereditos preenchidos.
 
+### Reproduzir o experimento completo
+
+```bash
+python -m tools.roda_experimento                      # as três trilhas
+python -m tools.roda_experimento --pular-gnn          # só as baselines (~10 min)
+python -m tools.roda_experimento --recorte 355030     # só a capital
+```
+
+Escreve `docs/resultados/{data}-trilhas-{recorte}.json` **incrementalmente**, a
+cada modelo — uma queda no meio da trilha 3 preserva o que a 1 e a 2 já mediram.
+Leva cerca de 45 minutos no estado, com pico de 5,1 GB de RAM.
+
+O resultado da execução documentada na seção 3 está em
+[`docs/resultados/2026-07-25-trilhas-estado-sp.json`](docs/resultados/2026-07-25-trilhas-estado-sp.json).
+
 ### Modelagem por script
 
 ```python
@@ -372,7 +458,83 @@ graph.montar_db(recorte=None)       # país inteiro — exige memória de sobra
 
 ## 7. Conclusão
 
-<!-- CONCLUSAO -->
+### A resposta, com a ressalva junto
+
+**A estrutura da rede carrega informação sobre onde recursos serão adquiridos.**
+As duas GNNs superam as três baselines tabulares em average precision e AUC, e a
+margem não é marginal: 9,4 vezes a prevalência contra 5,5 do melhor modelo sem
+estrutura.
+
+**Mas as GNNs não vencem na métrica que reflete o uso pretendido.** Em MAP@10 —
+ranquear equipamentos dentro de um estabelecimento — perdem para um modelo que só
+conhece a popularidade de cada tipo de equipamento e ignora completamente o
+estabelecimento.
+
+As duas afirmações são verdadeiras ao mesmo tempo. Reportar apenas a primeira
+seria propaganda; reportar apenas a segunda esconderia um ganho real. O
+diagnóstico é que as GNNs aprenderam a dimensão *estabelecimento* e não a
+dimensão *item*, e ele é testável: um modelo que combine o escore da GNN com o
+log-odds da popularidade do item deve vencer nas duas métricas. Se vencer,
+confirma; se não, refuta.
+
+### O que o trabalho estabeleceu, além do número
+
+O desenho experimental é a contribuição mais sólida desta iteração:
+
+- **A comparação é pareada de verdade.** As três trilhas consomem a mesma tabela
+  de rótulos, a mesma partição temporal, e são avaliadas sobre o mesmo
+  subconjunto de nós.
+- **O piso é verificável.** A baseline de persistência devolve AP exatamente
+  igual à prevalência e AUC exatamente 0,500. Qualquer desvio denuncia erro no
+  arcabouço.
+- **Os vieses estão quantificados, não mencionados.** O subconjunto com
+  coordenada tem prevalência 18% maior que a população; está escrito ao lado do
+  resultado.
+- **As decisões estão auditáveis.** Vinte e seis entradas em
+  [`docs/03-decisoes.md`](docs/03-decisoes.md), cada uma com a evidência que a
+  motivou e o que foi rejeitado.
+
+### Erros encontrados e corrigidos ao longo do caminho
+
+Vale listar, porque cada um teria produzido um resultado plausível e errado:
+
+| Erro | Efeito se não corrigido |
+|---|---|
+| `test()` avaliava sobre `train_mask` | desempenho de treino reportado como de teste |
+| Grafo estático cortado no fim do treino | rótulo dentro do grafo na última transição de treino |
+| Um nó por linha de tabela de fato | 76 milhões de nós, e nenhum vizinho compartilhado entre unidades com o mesmo equipamento |
+| Chave estrangeira apontando para tabela não materializada | referência pendurada no grafo do RelBench |
+| Teto de coordenada medido em 6 de 9 snapshots | 57% em vez dos 85,7% reais; trilha 3 quase descartada |
+| Empates de MAP@k desfeitos pela ordem das linhas | escore constante parecendo ranqueador competente |
+
+### Limites que continuam de pé
+
+**Escassez continua inferida.** O resultado é sobre *aquisição*, não sobre
+*necessidade*. A ponte entre as duas é hipótese declarada, e só dado de demanda —
+a produção ambulatorial do SIA/SUS é a fonte candidata — pode fechá-la.
+
+**O grafo é estático.** Cortado em 2017 para não vazar rótulo, ele descreve uma
+rede oito anos mais velha que o conjunto de teste. Um grafo temporal com
+visibilidade por exemplo é a extensão de maior valor para as trilhas
+estruturais.
+
+**Um estado, uma métrica de destaque em disputa.** A generalização para outros
+estados não foi testada, e a discordância entre AP e MAP@10 significa que a
+escolha da métrica principal ainda tem consequência sobre qual modelo se declara
+melhor.
+
+### Próximos passos, em ordem de valor sobre custo
+
+1. **Modelo combinado GNN + popularidade do item.** Barato, e decide o
+   diagnóstico central deste relatório.
+2. **Grafo temporal.** Remove o handicap de oito anos imposto às trilhas
+   estruturais pela correção de vazamento.
+3. **População municipal do IBGE.** Desbloqueada pela expansão para o estado —
+   645 municípios dão variância onde um só dava constante.
+4. **Produção ambulatorial do SIA/SUS.** A única fonte que transformaria escassez
+   inferida em escassez com demanda observada. Também a mais cara, e sujeita ao
+   viés de cobertura descrito em
+   [`docs/04-dados-externos.md`](docs/04-dados-externos.md).
 
 ---
 

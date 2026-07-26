@@ -557,7 +557,10 @@ def treinar_aquisicao(
             {"epoca": epoca, "perda": float(perda.detach()), "ap_validacao": ap}
         )
         if verboso and epoca % 20 == 0:
-            print(f"época {epoca:4d}  perda {float(perda):.4f}  AP validação {ap:.4f}")
+            print(
+                f"época {epoca:4d}  perda {float(perda.detach()):.4f}  "
+                f"AP validação {ap:.4f}"
+            )
 
         if ap > melhor_ap:
             melhor_ap, melhor_epoca, sem_melhora = ap, epoca, 0
