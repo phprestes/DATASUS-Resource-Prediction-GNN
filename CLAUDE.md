@@ -10,11 +10,13 @@ Code comments, docstrings, prints and docs are in **Portuguese**. Keep new code 
 
 ## Read the docs first
 
-Four Markdown files in [docs/](docs/) are the project's contract. They are not summaries of the code — the code is downstream of them.
+Five Markdown files in [docs/](docs/) are the project's contract. They are not summaries of the code — the code is downstream of them.
 
 - **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/schema.py](src/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
 - **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
 - **[docs/03-decisoes.md](docs/03-decisoes.md)** — 32 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/04-dados-externos.md](docs/04-dados-externos.md)** — the six-item admission test for any source outside CNES. The binding rule: no external source enters as a label.
+- **[docs/05-esboco-artigo.md](docs/05-esboco-artigo.md)** — the article outline: what the paper claims, in what order, and what is still unwritten. The README describes the repository; this holds the argument. Results interpretation lives here, not in the README.
 - **[docs/DICIONARIO_DE_DADOS.pdf](docs/DICIONARIO_DE_DADOS.pdf)** — the DATASUS data dictionary (2025 edition), 155 pages. It describes the **Oracle** database, not the distributed CSV: the extraction exports a subset of the columns and renames some. Where the two disagree, the CSV wins. Read it with `pdftotext -layout`, never page by page.
 
 `docs/SelecaoTabelas_v1.pdf` and `_v2.pdf` are historical records, superseded by `01-selecao-tabelas.md`. `docs/CNES_GNN-2.pdf` is the original project proposal; the code has deliberately diverged from it (see D-01).
@@ -23,17 +25,29 @@ Four Markdown files in [docs/](docs/) are the project's contract. They are not s
 
 Python 3.12 in `.venv`, managed by **uv** (there is no `pip` inside it). Package installed editable as `meu-projeto-ic`.
 
+**The Makefile is the documented entry point** — `make` with no argument lists every target, its variables and examples. Prefer it over raw module invocations, and keep it in sync when you add a workflow.
+
+```bash
+make                     # list targets
+make etl                 # full ETL, one competência at a time (resumable)
+make etl-periodo PERIODOS=202601
+make mudancas            # recompute change events (after touching keys or typing)
+make reprocessar-tabelas TABELAS=tbEstabelecimento PERIODO=202601
+make testes              # full suite
+make verificar           # tests + schema summary derived from the doc
+make experimento         # three tracks under a memory cap
+make resultados          # print the paired table of the newest run
+```
+
+Underneath, the stages are still plain modules if you need them directly:
+
 ```bash
 source .venv/bin/activate
-
-# ETL. Each stage reads the previous layer and writes the next.
-python -m src.extract              # 10 annual ZIPs -> data/01_raw  (~3.6 GB)
-python -m src.extract 202601       # or specific competências
-python -m src.to_sql               # ZIP CSVs -> DuckDB per period  -> data/02_intermediate
-python -m src.to_parquet           # DuckDB -> typed Parquet        -> data/03_primary
+python -m src.pipeline             # orchestrated ETL; `--periodos`, `--pular-download`
+python -m src.extract 202601       # 10 annual ZIPs -> data/01_raw (~3.6 GB)
+python -m src.to_sql               # ZIP CSVs -> DuckDB per period -> data/02_intermediate
+python -m src.to_parquet           # DuckDB -> typed Parquet -> data/03_primary
 python -m src.changes              # snapshot diffs -> change events -> data/04_feature
-
-python -m pytest tests/ -q         # full suite
 python -m pytest tests/test_schema.py::test_fact_tables_e_useful_columns_nao_podem_divergir
 ```
 
@@ -112,13 +126,14 @@ The machine has 9 GB and building the state-scope task table once crashed the us
 
 ## Reproducing the experiment
 
-`python -m tools.roda_experimento` runs all three tracks and writes
+`make experimento` (or `python -m tools.roda_experimento`) runs all three tracks and writes
 `docs/resultados/{date}-trilhas-{recorte}.json` incrementally. ~55 min at state
 scope, **6.3 GB peak** with the ten-snapshot series. On this 9 GB machine that
 only fits if the browser and IDE are not holding 7 GB: run it under a cgroup
-(`systemd-run --user --scope -p MemoryMax=7G -q .venv/bin/python -m tools.roda_experimento`)
-so an overrun kills the experiment instead of the user's session — a 5.5 GB cap
-with swap disabled died right at the start of GNN training.
+— which is what the `make` target already does, wrapping the run in
+`systemd-run --user --scope -p MemoryMax=$(MEM)` so an overrun kills the experiment
+instead of the user's session. A 5.5 GB cap with swap disabled died right at the
+start of GNN training.
 `--pular-gnn` stops after the baselines. The graph cutoff must be
 `particao.antes_de_todos_os_rotulos`, never `fim_do_treino` — the latter puts the
 label inside the graph (D-25), and `grafo_relacional_para_data` refuses the call
