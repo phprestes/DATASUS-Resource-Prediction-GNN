@@ -113,6 +113,29 @@ def data_do_periodo(periodo: str) -> pd.Timestamp:
     return pd.Timestamp(year=int(periodo[:4]), month=int(periodo[4:]), day=1)
 
 
+def _marcos_da_particao(pasta: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """
+    Datas em que validação e teste começam, lidas da camada primária.
+
+    O RelBench pede `val_timestamp` e `test_timestamp` como atributos do
+    `Dataset`, e `src/splits.py` já decide a divisão a partir das transições
+    existentes. Derivar daqui é o que mantém as duas coisas coerentes quando a
+    série cresce — foi o motivo de as datas deixarem de ser literais.
+
+    Importado dentro da função porque `src.splits` importa `src.changes`, que
+    importa este módulo indiretamente pela camada de caminhos.
+    """
+    from src.changes import periodos_disponiveis
+    from src.splits import particionar
+
+    periodos = periodos_disponiveis(pasta)
+    particao = particionar(periodos)
+    return (
+        data_do_periodo(particao.validacao[0].destino),
+        data_do_periodo(particao.teste[0].destino),
+    )
+
+
 def periodos_com_tabela(
     tabela: str, pasta: Path = PRIMARY_FOLDER
 ) -> dict[str, Path]:
@@ -307,10 +330,13 @@ class CNESDataset(Dataset):
     ) -> None:
         self.recorte = recorte
         self.pasta = pasta
-        # Coerentes com a partição de src/splits.py sobre os nove snapshots
-        # anuais: validação começa na transição 202301, teste na 202501.
-        self.val_timestamp = val_timestamp or data_do_periodo("202301")
-        self.test_timestamp = test_timestamp or data_do_periodo("202501")
+        # Derivados da partição de src/splits.py sobre os snapshots que existem
+        # na camada primária, não fixados no código: acrescentar uma competência
+        # move validação e teste um ano adiante, e uma data cravada aqui deixaria
+        # o RelBench avaliando num período que a partição chama de treino.
+        padrao_val, padrao_teste = _marcos_da_particao(pasta)
+        self.val_timestamp = val_timestamp or padrao_val
+        self.test_timestamp = test_timestamp or padrao_teste
         super().__init__(**kwargs)
 
     def make_db(self) -> Database:

@@ -15,8 +15,24 @@ def clean_cnes_data(
         input_folder : Path = INTERMEDIATE_FOLDER,
         output_folder : Path = PRIMARY_FOLDER,
         reprocess : bool = False,
+        tabelas : "List[str] | None" = None,
 ) -> None:
-    
+    """
+    Converte o DuckDB de cada competência em Parquet tipado por `CNES_DTYPES`.
+
+    `tabelas` restringe a conversão a um subconjunto, para o caso de uma coluna
+    recém-admitida em `01-selecao-tabelas.md` que só afeta uma tabela. Com
+    `reprocess=False` (default), Parquet já existente é preservado.
+    """
+    if tabelas is not None:
+        desconhecidas = [t for t in tabelas if t not in CNES_EXTRACT_COLUMNS]
+        if desconhecidas:
+            raise ValueError(
+                f"tabelas fora do escopo de docs/01-selecao-tabelas.md: {desconhecidas}"
+            )
+        tabelas = set(tabelas)
+
+
     for period in tqdm(periods, desc="Processando períodos"):
         input_path = input_folder / f"{INPUT_PREFIX}{period}.duckdb"
         period_folder = output_folder / str(period)
@@ -39,6 +55,9 @@ def clean_cnes_data(
                     base_table = table
                     
                 if base_table not in CNES_EXTRACT_COLUMNS:
+                    continue
+
+                if tabelas is not None and base_table not in tabelas:
                     continue
                 
                 parquet_path = period_folder / f"{base_table}.parquet"
@@ -67,7 +86,19 @@ def clean_cnes_data(
                         elif dtype in ['float64', 'float32']:
                             cols_str_list.append(f'TRY_CAST("{col}" AS DOUBLE) AS "{col}"')
                         else:
-                            cols_str_list.append(f'TRY_CAST("{col}" AS VARCHAR) AS "{col}"')
+                            # TRIM não é cosmético. As colunas CHAR(n) do Oracle
+                            # chegam preenchidas com espaço, e o preenchimento
+                            # muda quando o CNES alarga a coluna: em 202601
+                            # `co_tipo_equipamento` passou de CHAR(1) para
+                            # CHAR(2), e '1' virou '1 '. Sem normalizar, nenhuma
+                            # linha casa entre 202501 e 202601 — a taxa de
+                            # mudança da tabela do alvo foi a 1,94, tudo contado
+                            # como remoção mais inserção. Ver D-30.
+                            # NULLIF depois do TRIM: string só de espaço é
+                            # ausência de valor, não valor vazio.
+                            cols_str_list.append(
+                                f'NULLIF(TRIM(TRY_CAST("{col}" AS VARCHAR)), \'\') AS "{col}"'
+                            )
 
                     cols_str = ", ".join(cols_str_list)
                     query = f"SELECT {cols_str} FROM {table}"

@@ -2,30 +2,22 @@
 
 Este arquivo é a **fonte da verdade** do schema usado pelo projeto. É lido em
 tempo de import por [`src/schema.py`](../src/schema.py), que dele deriva
-`FACT_TABLES`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY` e `CNES_FKEY`.
-Editar este arquivo muda o pipeline; não existe uma segunda lista em código
-para manter em sincronia.
+`FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`,
+`CNES_PKEY`, `CNES_NATURAL_KEY` e `CNES_FKEY`. Editar este arquivo muda o
+pipeline; não existe uma segunda lista em código para manter em sincronia.
 
-Substitui `docs/SelecaoTabelas_v1.pdf` e `docs/SelecaoTabelas_v2.pdf`, que
-ficam no repositório apenas como registro histórico.
+O dicionário de referência é [`DICIONARIO_DE_DADOS.pdf`](DICIONARIO_DE_DADOS.pdf),
+edição 2025. Ele descreve o banco Oracle, não o CSV distribuído: a extração
+exporta um subconjunto das colunas, e algumas trocam de nome no caminho. Onde os
+dois discordam, **vale o CSV**, porque é o que o pipeline lê.
 
 ## Critério de seleção
 
 Uma coluna só é `util` se passar em **dois** filtros independentes:
 
 1. **Semântico** — a coluna significa algo para a pergunta de pesquisa.
-   Herdado da classificação Útil / Não Útil do `SelecaoTabelas_v2.pdf`, que foi
-   lida do `DICIONARIO_DE_DADOS_CNES_2025.pdf`.
 2. **Empírico** — a coluna não é degenerada nos dados reais: não está 100% nula
    em todos os snapshots medidos, e não é constante em todos eles.
-
-A versão anterior da seleção aplicava só o primeiro. Isso deixava passar
-colunas que o dicionário descreve como significativas mas que, no banco de
-produção, não carregam informação nenhuma. O caso que motivou a mudança:
-`DT_ATUALIZACAO_ORIGEM` é descrita como "data da primeira entrada no banco de
-produção federal" e é semanticamente útil, mas chega 100% nula em
-`rlEstabEquipamento` e preenchida em `rlEstabComplementar` — a diferença é
-invisível para quem lê só o dicionário.
 
 ### Vocabulário de `classificacao`
 
@@ -38,11 +30,7 @@ invisível para quem lê só o dicionário.
 ### Escopo da tabela
 
 O campo **escopo** de cada tabela vale `incluida` ou `fora`. Só as `incluida`
-entram em `FACT_TABLES`, ou seja, só elas são ingeridas do ZIP. Antes desta
-revisão, 57 tabelas eram ingeridas e 13 delas descartadas em silêncio na
-conversão para Parquet, por não terem entrada em `CNES_USEFUL_COLUMNS`. O
-descarte agora é declarado, com motivo escrito, e acontece antes do download
-virar trabalho perdido.
+entram em `FACT_TABLES`, ou seja, só elas são ingeridas do ZIP.
 
 ## Notas de nomenclatura
 
@@ -56,9 +44,19 @@ deformações são recorrentes:
   alias da tabela sobrevive dentro do nome: `to_charadt_atualizacaoddmmyyyy`.
 - **Nomes diferentes para a mesma coisa.** `RL_NASF_CNES` no dicionário é
   `rlNasfEsf` no CSV. `CO_PROFISSIONAL` em `RL_ESTAB_UNID_ACOLHIM` é
-  `co_profissional_sus`. `SEQ_EQUIPE` em `RL_EQUIPE_ALDEIA` é `co_seq_equipe`.
+  `co_profissional_sus`. `NU_CNPJ_DET_VINC` em `TB_CARGA_HORARIA_SUS` é
+  `nu_cnpj_detalhamento_vinculo`.
+- **Duas colunas de nome no dicionário.** Cada bloco do PDF traz o nome do
+  *banco local* e o nome do *banco de produção federal*, e é o federal que
+  chega ao CSV. `SEQ_EQUIPE` em `RL_EQUIPE_ALDEIA` é o nome local; o federal e
+  o do CSV são `CO_SEQ_EQUIPE` / `co_seq_equipe`. Comparar com a coluna errada
+  do PDF produz divergência que não existe.
 - **Caixa.** O dicionário é `SCREAMING_SNAKE_CASE`; o CSV é `snake_case` e os
   nomes de tabela são `camelCase`.
+- **Uma tabela, várias views.** `rlEstabSipac` é um único CSV, mas o dicionário
+  o descreve em sete entradas (`LFCES045`, `046`, `049`, `050`, `051`, `053`,
+  `072`), todas apontando para `RL_ESTAB_SIPAC` com colunas diferentes. Não
+  existe um bloco único do PDF para conferir essa tabela.
 
 ## Legenda das colunas
 
@@ -66,6 +64,18 @@ deformações são recorrentes:
   `src/to_parquet.py`. `datetime64[ns]` dispara `try_strptime` com máscara
   `%d/%m/%Y` e anula datas anteriores a 1900-01-01, sentinela do CNES.
 - **pkey** / **fkey_para** — o grafo relacional entregue ao RelBench.
+- **nulos** — percentual de nulos em `201701`/`202501`, as duas competências da
+  triagem inicial (D-06). É evidência **parcial**: a classificação vale sobre os
+  série inteira de snapshots (D-18 a D-20, D-29), e uma coluna pode aparecer aqui
+  com `100/100` e
+  ainda assim ser `util` porque tem valor em alguma competência do meio — é o
+  caso de `rlEstabCentralReg.dt_desativacao` e das duas colunas de veículo de
+  `rlEstabSamu`. Quando divergirem, vale a triagem sobre a série inteira.
+- **n/m** — não medida: a coluna existe no dicionário mas **não** no CSV
+  distribuído, então nunca foi lida. São 128 casos, quase todos
+  `dt_cmtp_inicio`, `dt_cmtp_fim`, `nu_seq_processo` e `st_status`. Ficam
+  registradas para que a leitura do dicionário seja rastreável, e todas são
+  `descartada`.
 
 ### Chave primária e chave natural
 
@@ -82,20 +92,77 @@ de inserção ao comparar dois snapshots. É opcional: quando não declarada, o
 diff opera por presença da tupla inteira e não classifica modificações — o que
 infla a taxa de mudança, porque cada alteração conta como dois eventos.
 
-As chaves naturais hoje declaradas são **hipóteses derivadas do dicionário**,
-ainda não verificadas contra os dados. Confirmar sua unicidade é item do
-`notebook/00_analise_alvo.ipynb`.
-- **nulos** — percentual de nulos medido, por snapshot, na ordem
-  201701 e 202501. `n/m` = não medida.
+São **42 das 44 tabelas**, e nenhuma foi declarada por dedução: cada tupla tem
+zero duplicatas em todos os snapshots da camada primária (D-27). Vieram de três
+lugares — a PRIMARY KEY composta do dicionário (25 tabelas), a chave primária de
+uma coluna quando ela é de fato única (9), e busca da menor combinação única (8),
+usada quando o dicionário citava coluna com outro nome no CSV, como
+`dt_avaliacao` virando `to_chardt_avaliacaoddmmyyyy`, ou quando a chave do
+dicionário simplesmente não bastava.
+
+`rlMunUnidAcolhim` é o exemplo do último caso e vale registrar: o dicionário dá
+`co_unidade` + `sq_acolhimento`, e essa tupla duplica em **todos** os snapshots —
+43 linhas de 80 em 201701. Faltava `co_municipio`, e é óbvio depois de olhar: a
+tabela liga *cada município atendido* a uma unidade de acolhimento, então o
+município é parte da identidade da linha. A chave do dicionário estava errada,
+não incompleta por nome.
+
+As duas que ficaram sem: `rlEstabServClass` e `rlEstabSipac`, onde nenhuma
+combinação de até quatro colunas materializadas identifica a linha.
+
+Duas regras que valem para declarar mais:
+
+- **Mínima.** `tp_sus` e `co_tipo_leito` estavam nas chaves de
+  `rlEstabEquipamento` e `rlEstabComplementar` e são redundantes — os
+  subconjuntos sem eles já são únicos. Chave inflada é pior que chave curta:
+  uma linha que só troca `tp_sus` passa a contar como remoção mais inserção,
+  que é exatamente o que a chave natural existe para evitar.
+- **Verificada, não deduzida.** `rlEstabServClass` é a única tabela cuja PK
+  composta do dicionário **não** identifica a linha nos dados (561 duplicatas
+  em 201701, 1.159 em 201901). Por isso continua sem chave natural, apesar de o
+  dicionário oferecer uma — e isso importa, porque ela é o alvo alternativo de
+  primeira escolha (D-18).
+
+### Chave estrangeira
+
+`fkey_para` só é declarada quando os valores da coluna são valores da **chave
+primária declarada do destino**. A regra é estreita de propósito: o dicionário
+tem chaves estrangeiras *compostas*, este formato só sabe escrever uma coluna
+por linha, e o RelBench lê cada declaração como join contra a pkey do destino.
+Declarar componentes soltos produz aresta vazia — medido em 202501, nenhum dos
+312 valores de `rlEstabEquipeProf.co_cbo` casa com um `co_unidade` de
+`tbCargaHorariaSus`, e nenhum dos 3.622 valores de `co_area` casa com um
+`co_municipio` de `tbEquipe` (D-28).
+
+Duas consequências:
+
+- `co_unidade` sempre aponta para `tbEstabelecimento`, a única tabela cuja pkey
+  é de fato única por snapshot (560.166 linhas, 560.166 valores em 202501).
+- Os componentes que sobraram viram atributo, com a nota na justificativa. A
+  ligação com a equipe fica pela componente de município, que casa 100% mas
+  liga a linha a *todas* as equipes daquele município — limitação registrada em
+  D-28, não resolvida.
 
 ## Resumo
 - Tabelas no dicionário: 57
 - Tabelas `incluida`: 44
 - Tabelas `fora`: 13
-- Colunas `util`: 389
-- Colunas `descartada` pelo filtro semântico: 521
-- Colunas `descartada` pelo filtro empírico: 1
+- Colunas `util`: 393
+- Colunas `descartada` pelo filtro semântico: 521 — 352 nas seções abaixo mais
+  as 169 das 13 tabelas `fora`, que não têm seção própria
+- Colunas `descartada` pelo filtro empírico: 3
 - Colunas `pendente`: 0
+- Chaves naturais declaradas: 42 de 44 — faltam `rlEstabServClass` e
+  `rlEstabSipac`
+
+**Admitir coluna nova exige regerar a camada primária.** `co_tipo_abrangencia`,
+`st_coworking` e `sq_acolhimento` entraram depois que os Parquet de
+`data/03_primary` existiam, e o Parquet só contém o que estava declarado no
+momento da conversão. As três já foram regeradas. Para as próximas, `to_sql` e
+`to_parquet` aceitam `tabelas=[...]`: reprocessar só as tabelas afetadas custa
+minutos, contra horas da competência inteira. O DuckDB intermediário produzido
+assim é **parcial** — apague-o depois, ou `to_parquet` sem argumento exportaria
+apenas o que estiver nele.
 
 ### Tabelas fora de escopo
 
@@ -106,14 +173,29 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `rlEstabOrgParc` | filtro semântico: todas as 24 colunas do dicionário são Não Útil |
 | `rlEstabRepresentante` | filtro semântico: todas as 11 colunas do dicionário são Não Útil |
 | `rlEstabTeleCnes` | filtro semântico: todas as 10 colunas do dicionário são Não Útil |
-| `rlJustifPtProf` | filtro semântico: todas as 12 colunas do dicionário são Não Útil |
-| `rlJustifPtProfLog` | filtro semântico: todas as 13 colunas do dicionário são Não Útil |
+| `rlJustifPtProf` | filtro semântico: todas as 12 colunas do dicionário são Não Útil; além disso, não existe CSV desta tabela em nenhuma das dez competências |
+| `rlJustifPtProfLog` | filtro semântico: todas as 13 colunas do dicionário são Não Útil; além disso, não existe CSV desta tabela em nenhuma das dez competências |
 | `rlNasfEsf` | filtro semântico: todas as 11 colunas do dicionário são Não Útil |
 | `tbEquipeAtendCompl` | filtro semântico: todas as 11 colunas do dicionário são Não Útil |
 | `tbEquipeChDifer` | filtro semântico: todas as 14 colunas do dicionário são Não Útil |
-| `tbEstabBanco` | filtro semântico: todas as 10 colunas do dicionário são Não Útil |
-| `tbJustificaDesligaPrf` | filtro semântico: todas as 15 colunas do dicionário são Não Útil |
-| `tbLocalGerenteAdministrador` | filtro semântico: todas as 5 colunas do dicionário são Não Útil |
+| `tbEstabBanco` | filtro semântico: todas as 10 colunas do dicionário são Não Útil; além disso, não existe CSV desta tabela em nenhuma das dez competências |
+| `tbJustificaDesligaPrf` | filtro semântico: todas as 15 colunas do dicionário são Não Útil; além disso, não existe CSV desta tabela em nenhuma das dez competências |
+| `tbLocalGerenteAdministrador` | filtro semântico: todas as 5 colunas do dicionário são Não Útil; além disso, não existe CSV desta tabela em nenhuma das dez competências |
+
+### Tabelas de domínio, fora do alcance deste documento
+
+O ZIP traz 56 tabelas que este documento não classifica: `tbEquipamento`,
+`tbTipoEquipamento`, `tbLeito`, `tbServicoEspecializado`, `tbMunicipio`,
+`tbTipoUnidade` e outras 50 do mesmo tipo. São **tabelas de domínio** —
+`código -> descrição`, sem `co_unidade`, praticamente estáticas no tempo. Não
+entram em `FACT_TABLES` porque não descrevem estabelecimento nem mudam entre
+snapshots, e o critério de seleção acima é sobre coluna de tabela de fato.
+
+Duas delas são candidatas explícitas a uso futuro, e ficam registradas aqui para
+não se perderem: `tbEquipamento` e `tbTipoEquipamento` dão nome e agrupamento
+aos 99 itens do alvo, que é a dimensão em que as GNNs perdem MAP@10 (D-26); e
+`tbMunicipio` traz atributo municipal já baixado, antes de qualquer fonte
+externa (`04-dados-externos.md`).
 
 ## Tabelas
 
@@ -122,6 +204,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ADM_GERENCIA_CNES` — Gerente/Administrador x Contratos do Estab
 - **Escopo:** incluida
 - **Chave primária:** `nu_cnpj_adm`
+- **Chave natural:** `nu_cnpj_adm`, `co_unidade`, `to_chardt_vigencia_inicialddmmyyyy`
 - **Linhas medidas:** 201701: 878, 202501: 4.517
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -142,6 +225,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_COOPERATIVA` — Cooperativas
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_cooperativa`, `co_cbo`
 - **Linhas medidas:** 201701: 1.731, 202501: 2.323
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -161,13 +245,14 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_EQUIPE_ALDEIA` — Aldeias Atendidas das Equipes
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`, `co_seq_equipe`, `co_aldeia`
 - **Linhas medidas:** 201701: 0, 202501: 275
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbEquipe` | 0 | Código do Município da Equipe [3] |
-| `co_area` | VARCHAR2(4) | string | util | - | `tbEquipe` | 0 | Código da Área da Equipe [3] |
-| `co_seq_equipe` | NUMBER(8) | string | util | - | `tbEquipe` | 0 | Sequencial da Equipe [3] |
+| `co_area` | VARCHAR2(4) | string | util | - | - | 0 | Código da Área da Equipe [3] Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_seq_equipe` | NUMBER(8) | string | util | - | - | 0 | Sequencial da Equipe [3] Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
 | `co_aldeia` | NUMBER | category | util | - | - | 0 | Código da Aldeia [4] |
 | `co_unidade` | VARCHAR2(31) | string | util | - | `tbEstabelecimento` | 0 | Código do Estabelecimento de Saúde [5] |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0 | Data da Última Atualização do Registro [5] |
@@ -182,13 +267,14 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_EQUIPE_NASF_ESF` — ESF das Equipes NASF
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`, `seq_equipe`, `co_municipio_esf`, `co_area_esf`, `seq_equipe_esf`
 - **Linhas medidas:** 201701: 22.337, 202501: 85.806
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbEquipe` | 0/0 | Código do Município da Equipe NASF |
-| `co_area` | VARCHAR2(4) | string | util | - | `tbEquipe` | 0/0 | Código da Área da Equipe NASF |
-| `seq_equipe` | NUMBER(8) | string | util | - | `tbEquipe` | 0/0 | Sequencial da Equipe NASF |
+| `co_area` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área da Equipe NASF Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
+| `seq_equipe` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial da Equipe NASF Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
 | `co_municipio_esf` | VARCHAR2(6) | category | util | - | - | 0/0 | Código do Município da Equipe ESF vinculada |
 | `co_area_esf` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área da Equipe ESF vinculada |
 | `seq_equipe_esf` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial da Equipe ESF vinculada |
@@ -212,6 +298,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_ATEND_PREST_CONV` — Atendimento Prestado por Unidade
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_atendimento_prestado`, `co_convenio`
 - **Linhas medidas:** 201701: 599.097, 202501: 993.135
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -230,6 +317,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_ATEN_PSICO` — Atenção Psicossocial
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 974, 202501: 1.365
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -239,9 +327,9 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `st_parceria_ong` | CHAR(1) | category | util | - | - | 0/0 | Informa se possui parceria com ONG (S – Sim, N - Não) |
 | `nu_cnpj_ong` | VARCHAR2(14) | string | util | - | - | 94/93 | CNPJ da ONG (se houver parceria) |
 | `nu_vagas_acol_notur` | NUMBER(4) | Int64 | util | - | - | 0/0 | Número de vagas para Acolhimento Noturno |
-| `co_profissional_sus` | VARCHAR2(16) | string | util | - | `tbCargaHorariaSus` | 0/0 | Código do Profissional de Saúde |
-| `co_cbo` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | Código Brasileiro de Ocupação |
-| `tp_sus_nao_sus` | CHAR(1) | category | util | - | `tbCargaHorariaSus` | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S - Sim, N - Não) |
+| `co_profissional_sus` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Profissional de Saúde Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_cbo` | VARCHAR2(6) | category | util | - | - | 0/0 | Código Brasileiro de Ocupação Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `tp_sus_nao_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S - Sim, N - Não) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `ind_vinculacao` | VARCHAR2(6) | category | util | - | - | 0/0 | Indica a vinculação, o tipo e o sub tipo de vínculo do Profissional |
 | `co_cnes_referencia` | VARCHAR2(7) | string | util | - | - | 0/0 | CNES do Hospital Geral de Referência |
 | `st_unidade_regional` | CHAR(1) | category | util | - | - | 0/0 | Indica se a Atenção Psicossocial possui Unidade Regional (S - Sim, N - Não) |
@@ -257,6 +345,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_AVALIACAO` — Metodologia/Classificação do Estabelecimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_avaliacao`, `to_chardt_avaliacaoddmmyyyy`
 - **Linhas medidas:** 201701: 1.317, 202501: 1.721
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -279,6 +368,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_CENTRAL_REG` — Bases Descentralizadas
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_seq_central`
 - **Linhas medidas:** 201701: 2.368, 202501: 3.204
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -316,6 +406,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_COLETA_SEL_REJEITO` — Coleta Seletiva de Rejeitos
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_coleta_rejeito`
 - **Linhas medidas:** 201701: 496.094, 202501: 841.582
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -333,6 +424,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_COMISSAO_OUTRO` — Comissões
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_comissao`
 - **Linhas medidas:** 201701: 76.572, 202501: 93.048
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -353,7 +445,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_COMPLEMENTAR` — Leitos Hospitalares
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
-- **Chave natural:** `co_unidade`, `co_leito`, `co_tipo_leito`
+- **Chave natural:** `co_unidade`, `co_leito`
 - **Linhas medidas:** 201701: 53.489, 202501: 59.848
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -377,15 +469,18 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_EQP_EMBARCACAO` — Embarcações de Apoio
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`, `seq_equipe`, `nu_embarcacao`
 - **Linhas medidas:** 201701: 22, 202501: 1.019
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbEquipe` | 0/0 | Código do Município da Equipe |
-| `co_area` | VARCHAR2(4) | string | util | - | `tbEquipe` | 0/0 | Código da Área da Equipe |
-| `seq_equipe` | NUMBER(8) | string | util | - | `tbEquipe` | 0/0 | Sequencial da Equipe |
+| `co_area` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área da Equipe Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
+| `seq_equipe` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial da Equipe Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
 | `nu_embarcacao` | VARCHAR2(3) | string | util | - | - | 0/0 | Número da Embarcação de Apoio |
 | `no_embarcacao` | VARCHAR2(60) | string | descartada | - | - | 0/0 | filtro semântico: Nome da Embarcação de Apoio |
+| `tp_veiculo` | CHAR(1) | category | util | - | - | n/m | Tipo do Veículo de apoio (`E`, `P`). **Nova em 202601**; fora do dicionário 2025. Em 202601: 2,7% nula, 2 valores. Distingue embarcação de veículo terrestre, o que muda o sentido da tabela — "embarcações de apoio" passou a comportar os dois |
+| `no_registro_veiculo` | VARCHAR2(60) | string | descartada | - | - | n/m | filtro semântico: Registro do Veículo — identificador de um veículo específico (placa, RNM, número de casco), não atributo do estabelecimento. **Nova em 202601**; 89,1% nula |
 | `ds_comunidade_atendida` | VARCHAR2(60) | string | descartada | - | - | 0/0 | filtro semântico: Comunidade Atendida da Embarcação de Apoio |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(60) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
@@ -399,13 +494,14 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_EQP_UNID_APOIO` — Unidades de Apoio
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`, `seq_equipe`, `co_endereco_complementar`
 - **Linhas medidas:** 201701: 10, 202501: 1.166
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbEquipe` | 0/0 | Código do Município da Equipe |
-| `co_area` | VARCHAR2(4) | string | util | - | `tbEquipe` | 0/0 | Código da Área da Equipe |
-| `seq_equipe` | NUMBER(8) | string | util | - | `tbEquipe` | 0/0 | Sequencial da Equipe |
+| `co_area` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área da Equipe Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
+| `seq_equipe` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial da Equipe Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
 | `co_endereco_complementar` | VARCHAR2(5) | string | util | - | - | 0/0 | Código do Endereço Complementar. Mantida como atributo: a tabela destino `rlEstabEndCompl` está fora de escopo, então a chave estrangeira não tem para onde apontar |
 | `co_unidade` | VARCHAR2(31) | string | util | - | `tbEstabelecimento` | 0/0 | Código do Estabelecimento de Saúde. Corrigido: `src/constant.py` apontava esta coluna para `rlEstabEndCompl` |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
@@ -420,7 +516,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_EQUIPAMENTO` — Equipamentos
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
-- **Chave natural:** `co_unidade`, `co_equipamento`, `co_tipo_equipamento`, `tp_sus`
+- **Chave natural:** `co_unidade`, `co_equipamento`, `co_tipo_equipamento`
 - **Linhas medidas:** 201701: 747.500, 202501: 1.247.979
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -431,6 +527,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `qt_existente` | NUMBER(3) | Int64 | util | - | - | 0/0 | Quantidade de Equipamentos Existentes |
 | `qt_uso` | NUMBER(3) | Int64 | util | - | - | 0/0 | Quantidade de Equipamentos em Uso |
 | `tp_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Equipamento está disponível para o SUS (1-Sim, 2-Não) |
+| `qt_sus` | NUMBER(3) | Int64 | util | - | - | n/m | Quantidade de Equipamentos disponíveis para o SUS. **Nova em 202601** e ausente das nove competências anteriores; fora do dicionário 2025. Em 202601: 20,0% nula, 385 valores distintos. Interessa por dois motivos — desdobra o sinalizador `tp_sus` em quantidade, e é o análogo de `rlEstabComplementar.qt_sus` na tabela do alvo, portanto candidata à tarefa secundária de regressão (D-02). Com uma única competência, não sustenta série ainda |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(12) | string | descartada | - | - | 1/2 | filtro semântico: Último Usuário que atualizou o Registro |
 | `to_chardt_atualizacao_origemddmmyyyy` | DATE | string | descartada | - | - | 100/100 | filtro semântico: Data da Primeira entrada no Banco de Produção Federal |
@@ -443,17 +540,18 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_EQUIPE_PROF` — Profissionais das Equipes
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`, `seq_equipe`, `co_profissional_sus`
 - **Linhas medidas:** 201701: 553.581, 202501: 815.769
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbEquipe` | 0/0 | Código do Município |
-| `co_area` | VARCHAR2(4) | string | util | - | `tbEquipe` | 0/0 | Código da Área da Equipe |
-| `seq_equipe` | NUMBER(8) | string | util | - | `tbEquipe` | 0/0 | Sequencial da Equipe |
-| `co_profissional_sus` | VARCHAR2(16) | string | util | - | `tbCargaHorariaSus` | 0/0 | Código do Profissional de Saúde |
-| `co_unidade` | VARCHAR2(31) | string | util | - | `tbCargaHorariaSus` | 0/0 | Código do Estabelecimento de Saúde |
-| `co_cbo` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | Código Brasileiro de Ocupação |
-| `tp_sus_nao_sus` | CHAR(1) | category | util | - | `tbCargaHorariaSus` | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) |
+| `co_area` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área da Equipe Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
+| `seq_equipe` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial da Equipe Componente de chave estrangeira composta no dicionário (tbEquipe); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_profissional_sus` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Profissional de Saúde Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_unidade` | VARCHAR2(31) | string | util | - | `tbEstabelecimento` | 0/0 | Código do Estabelecimento de Saúde |
+| `co_cbo` | VARCHAR2(6) | category | util | - | - | 0/0 | Código Brasileiro de Ocupação Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `tp_sus_nao_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `ind_vinculacao` | CHAR(6) | category | util | - | - | 0/0 | Indica a vinculação, o tipo e o sub tipo de vínculo |
 | `co_microarea` | VARCHAR2(16) | category | util | - | - | 51/100 | MicroArea da Equipe |
 | `dt_entrada` | DATE | datetime64[ns] | util | - | - | 0/0 | Data de Entrada do Profissional na Equipe |
@@ -477,6 +575,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_INST_FISI_ASSIST` — Instalações Físicas para Assistência
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_instalacao`
 - **Linhas medidas:** 201701: 677.016, 202501: 1.037.063
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -497,6 +596,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_POLO_ALDEIA` — Aldeia / Polo-Base do Estabelecimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 78, 202501: 1.502
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -517,6 +617,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_PROF_COMISSAO` — Profissionais da Comissão
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_comissao`, `co_profissional_sus`
 - **Linhas medidas:** 201701: 0, 202501: 49.178
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -540,6 +641,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_PROG_FUNDO` — Gestão de Atividades/Nível de Atenção
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_atividade`, `tp_estadual_municipal`
 - **Linhas medidas:** 201701: 413.792, 202501: 629.017
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -558,6 +660,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_REGIME_RES` — Unidade de Atenção em Regime Residencial
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 25, 202501: 113
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -568,14 +671,14 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `nu_vagas_sus` | NUMBER(5) | Int64 | util | - | - | 0/0 | Número de vagas SUS |
 | `dt_ativacao` | DATE | datetime64[ns] | util | - | - | 0/0 | Data de Ativação |
 | `dt_desativacao` | DATE | datetime64[ns] | descartada | - | - | 100/100 | filtro empírico: 100% nula em todos os snapshots medidos |
-| `co_profissional_sus` | VARCHAR2(16) | string | util | - | `tbCargaHorariaSus` | 0/0 | Código do Profissional (Coordenador do Regime Residencial) |
-| `co_cbo` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | CBO do Coordenador |
-| `tp_sus_nao_sus` | CHAR(1) | category | util | - | `tbCargaHorariaSus` | 0/0 | Indica se o Coordenador faz Atendimento ao SUS (S-Sim, N-Não) |
+| `co_profissional_sus` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Profissional (Coordenador do Regime Residencial) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_cbo` | VARCHAR2(6) | category | util | - | - | 0/0 | CBO do Coordenador Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `tp_sus_nao_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Coordenador faz Atendimento ao SUS (S-Sim, N-Não) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `ind_vinculacao` | VARCHAR(6) | category | util | - | - | 0/0 | Vínculo do Coordenador com o Estabelecimento |
 | `co_cnes_caps_ref` | VARCHAR(7) | string | util | - | - | 0/0 | CNES do CAPS de Referência |
-| `co_prof_sus_caps_ref` | VARCHAR2(16) | string | util | - | `tbCargaHorariaSus` | 0/0 | Código do Coordenador do CAPS de Referência |
-| `co_cbo_caps_ref` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | CBO do Coordenador do CAPS de Referência |
-| `tp_sus_nao_sus_caps_ref` | CHAR(1) | string | descartada | - | `tbCargaHorariaSus` | 0/0 | filtro semântico: Atendimento SUS do Coord. CAPS Ref (S-Sim, N-Não) |
+| `co_prof_sus_caps_ref` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Coordenador do CAPS de Referência Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_cbo_caps_ref` | VARCHAR2(6) | category | util | - | - | 0/0 | CBO do Coordenador do CAPS de Referência Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `tp_sus_nao_sus_caps_ref` | CHAR(1) | string | descartada | - | - | 0/0 | filtro semântico: Atendimento SUS do Coord. CAPS Ref (S-Sim, N-Não) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `ind_vinculacao_caps_ref` | VARCHAR(6) | category | util | - | - | 0/0 | Vínculo do Coord. CAPS Ref |
 | `co_cnes_unid_basica_ref` | VARCHAR(7) | string | util | - | - | 0/0 | CNES da Unidade Básica de Referência |
 | `co_cnes_hosp_geral_ref` | VARCHAR(7) | string | util | - | - | 0/0 | CNES do Hospital Geral de Referência |
@@ -592,6 +695,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_SAMU` — Veículos SAMU
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `dt_ativacao`
 - **Linhas medidas:** 201701: 4.926, 202501: 14.769
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -644,6 +748,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_SERVICO_APOIO` — Serviços de Apoio
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_servico_apoio`, `co_caracteristica`
 - **Linhas medidas:** 201701: 383.554, 202501: 540.869
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -682,6 +787,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_SUB_TIPO` — Subtipo de Estabelecimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_tipo_unidade`, `co_sub_tipo_unidade`
 - **Linhas medidas:** 201701: 55.352, 202501: 115.393
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -701,6 +807,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_ESTAB_UNID_ACOLHIM` — Unidades de Acolhimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `sq_acolhimento`
 - **Linhas medidas:** 201701: 154, 202501: 217
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -723,8 +830,8 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `nu_cnpj_ong` | VARCHAR(14) | string | util | - | - | 86/85 | CNPJ da ONG |
 | `nu_vagas` | NUMBER(4) | Int64 | util | - | - | 0/0 | Número de vagas da Unidade de Acolhimento |
 | `co_profissional_sus` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Profissional de Saúde |
-| `co_cbo` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | Código Brasileiro de Ocupação |
-| `tp_sus_nao_sus` | CHAR(1) | category | descartada | - | - | 0/0 | filtro empírico: constante em todos os nove snapshots. Medido no gate; a triagem inicial via apenas duas competências e não a rejeitava |
+| `co_cbo` | VARCHAR2(6) | category | util | - | - | 0/0 | Código Brasileiro de Ocupação Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `tp_sus_nao_sus` | CHAR(1) | category | descartada | - | - | 0/0 | filtro empírico: constante em todos os snapshots medidos. Medido no gate; a triagem inicial via apenas duas competências e não a rejeitava |
 | `ind_vinculacao` | VARCHAR(6) | category | util | - | - | 0/0 | Indica a vinculação, o tipo e o sub tipo de vínculo |
 | `dt_ativacao` | DATE | datetime64[ns] | util | - | - | 0/0 | Data de Ativação |
 | `dt_desativacao` | DATE | datetime64[ns] | util | - | - | 99/100 | Data de Desativação |
@@ -742,6 +849,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_MUN_ATEN_PSICO` — Unidades Regionais da Atenção Psicossocial
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_municipio`
 - **Linhas medidas:** 201701: 868, 202501: 1.011
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -760,6 +868,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_MUN_REGIME_RES` — Unidades Regionais - Regime Residencial
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_municipio`
 - **Linhas medidas:** 201701: 4, 202501: 101
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -778,12 +887,13 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `RL_MUN_UNID_ACOLHIM` — Unidades Regionais da Unidade de Acolhimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `sq_acolhimento`, `co_municipio`
 - **Linhas medidas:** 201701: 80, 202501: 175
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_unidade` | VARCHAR2(31) | string | util | sim | `tbEstabelecimento` | 0/0 | Código do Estabelecimento de Saúde |
-| `sq_acolhimento` | NUMBER(10) | string | descartada | - | - | 0/0 | filtro semântico: Sequencial da Unidade de Acolhimento |
+| `sq_acolhimento` | NUMBER(10) | string | util | - | - | 0/0 | Sequencial da Unidade de Acolhimento. Não é atributo, é identidade: com `co_unidade` forma a chave natural desta tabela, e sem ela `src/changes.py` não distingue modificação de remoção mais inserção (D-27). Em `rlEstabUnidAcolhim` cumpre o mesmo papel |
 | `co_municipio` | VARCHAR2(6) | category | util | - | - | 0/0 | Código do Município |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(100) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
@@ -797,6 +907,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_AREA` — Áreas
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`
 - **Linhas medidas:** 201701: 50.527, 202501: 69.293
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -804,7 +915,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbSegmento` | 0/0 | Código do Município |
 | `co_area` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área |
 | `ds_area` | VARCHAR2(60) | string | descartada | - | - | 0/0 | filtro semântico: Descrição da Área |
-| `cd_segmento` | VARCHAR2(2) | category | util | - | `tbSegmento` | 0/0 | Código do Segmento |
+| `cd_segmento` | VARCHAR2(2) | category | util | - | - | 0/0 | Código do Segmento Componente de chave estrangeira composta no dicionário (tbSegmento); mantida como atributo porque o join por uma coluna só não resolve |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(60) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
 | `to_chardt_atualizacao_origemddmmyyyy` | DATE | string | descartada | - | - | 66/48 | filtro semântico: Data da primeira entrada no Banco de Produção Federal |
@@ -817,6 +928,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_CARGA_HORARIA_SUS` — Vínculos do Profissional no Estabelecimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_profissional_sus`, `co_cbo`, `tp_sus_nao_sus`, `ind_vinculacao`
 - **Linhas medidas:** 201701: 3.575.325, 202501: 6.104.979
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -835,7 +947,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `sg_uf_crm` | VARCHAR2(2) | string | descartada | - | - | 48/38 | filtro semântico: UF do CRM |
 | `tp_preceptor` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Profissional é Preceptor Equipe (1=Sim, 2=Não) |
 | `tp_residente` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Profissional é Residente Equipe (1=Sim, 2=Não) |
-| `nu_cnpj_det_vinc` | VARCHAR(14) | string | descartada | - | - | n/m | filtro semântico: Número do CNPJ do Empregador |
+| `nu_cnpj_detalhamento_vinculo` | VARCHAR(14) | string | descartada | - | - | 0/0 | filtro semântico: Número do CNPJ do Empregador. O dicionário chama de `NU_CNPJ_DET_VINC`; o CSV usa o nome longo, nas nove competências |
 | `to_charadt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(12) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
 | `to_charadt_atualizacao_origemddmmyyyy` | DATE | string | descartada | - | - | 100/100 | filtro semântico: Data da Primeira entrada no Banco Produção Federal |
@@ -848,6 +960,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_DADOS_PROFISSIONAL_SUS` — Profissionais
 - **Escopo:** incluida
 - **Chave primária:** `co_profissional_sus`
+- **Chave natural:** `co_profissional_sus`
 - **Linhas medidas:** 201701: 3.917.468, 202501: 7.067.344
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -862,6 +975,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `co_nacionalidade` | VARCHAR2(3) | string | descartada | - | - | 100/100 | filtro semântico: Código de Nacionalidade |
 | `co_seq_inclusao` | NUMBER(8) | string | descartada | - | - | 59/77 | filtro semântico: Código Sequencial de Inclusão |
 | `to_chardt_atualizacao_origemddmmyyyy` | DATE | string | descartada | - | - | 87/93 | filtro semântico: Data da Primeira entrada no Banco de Produção Federal[cite: 218] |
+| `no_social` | VARCHAR2(60) | string | descartada | - | - | 100/100 | filtro empírico: 100% nula nas três competências em que existe (201701, 201801, 202501); fora do dicionário 2025. Falharia também no filtro semântico — Nome Social identifica pessoa, não descreve recurso |
 | `dt_cmtp_inicio` | DATE | string | descartada | - | - | n/m | filtro semântico: Data da Primeira entrada ou Data do Retorno no Banco de Produção Federal |
 | `dt_cmtp_fim` | DATE | string | descartada | - | - | n/m | filtro semântico: Data Final de Competência |
 | `nu_seq_processo` | NUMBER(8) | string | descartada | - | - | n/m | filtro semântico: Número do Processo da Última Carga |
@@ -871,6 +985,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_DIALISE` — Diálise
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 985, 202501: 1.261
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -907,12 +1022,13 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_EQUIPE` — Equipes
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_area`, `seq_equipe`
 - **Linhas medidas:** 201701: 52.657, 202501: 120.722
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
 | `co_municipio` | VARCHAR2(6) | category | util | sim | `tbArea` | 0/0 | Código do Município |
-| `co_area` | VARCHAR2(4) | string | util | - | `tbArea` | 0/0 | Código da Área da Equipe |
+| `co_area` | VARCHAR2(4) | string | util | - | - | 0/0 | Código da Área da Equipe Componente de chave estrangeira composta no dicionário (tbArea); mantida como atributo porque o join por uma coluna só não resolve |
 | `seq_equipe` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial da Equipe |
 | `co_unidade` | VARCHAR2(31) | string | util | - | `tbEstabelecimento` | 0/0 | Código do Estabelecimento de Saúde |
 | `tp_equipe` | VARCHAR2(2) | category | util | - | - | 0/0 | Tipo de Equipe |
@@ -950,6 +1066,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_ESTAB_ATIV_SECUNDARIA` — Atividades Secundárias do Estabelecimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_atividade_secundaria`
 - **Linhas medidas:** 201701: 0, 202501: 713.614
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -968,6 +1085,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_ESTABELECIMENTO` — Estabelecimentos de Saúde
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 329.811, 202501: 560.166
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1022,6 +1140,8 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `co_tipo_estabelecimento` | VARCHAR2(3) | category | util | - | - | 100/8 | Código do Tipo de Estabelecimento |
 | `co_atividade_principal` | VARCHAR2(3) | category | util | - | - | 100/8 | Código da Atividade Principal |
 | `st_contrato_formalizado` | VARCHAR(1) | category | util | - | - | 100/59 | Indica contrato formalizado com o SUS |
+| `co_tipo_abrangencia` | VARCHAR(2) | category | util | - | - | 100/90 | Tipo de Abrangência do Estabelecimento, 6 valores (`01`–`06`). Fora do dicionário 2025; existe no CSV de 201701, 201801, 202401 e 202501, e só passa a ser preenchida em 202401 (98,9% nula) e 202501 (90,0%) — outro caso do padrão de D-20 |
+| `st_coworking` | CHAR(1) | category | util | - | - | 100/68 | Indica compartilhamento de espaço com outro estabelecimento (S/N). Fora do dicionário 2025; existe no CSV de 201701, 201801 e 202501, e só tem valor em 202501 (67,6% nula) |
 | `co_tipo_unidade` | CHAR(2) | string | descartada | - | - | 100/100 | filtro semântico: Sem Uso |
 | `no_fantasia_abrev` | VARCHAR2(21) | string | descartada | - | - | 100/100 | filtro semântico: Sem Uso |
 | `tp_gestao` | CHAR(1) | category | util | - | - | 0/0 | Tipo de Gestão |
@@ -1034,6 +1154,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_ESTAB_HORARIO_ATEND` — Horário de Funcionamento do Estabelecimento
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_dia_semana`, `hr_inicio_atendimento`
 - **Linhas medidas:** 201701: 684.738, 202501: 2.631.274
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1054,6 +1175,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_HEMOTERAPIA` — Hemoterapia
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 1.924, 202501: 2.292
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1112,6 +1234,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_MANTENEDORA` — Mantenedoras
 - **Escopo:** incluida
 - **Chave primária:** `nu_cnpj_mantenedora`
+- **Chave natural:** `nu_cnpj_mantenedora`
 - **Linhas medidas:** 201701: 9.686, 202501: 9.908
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1146,16 +1269,17 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_PROF_RESIDENCIA` — Profissionais da Residência Terapêutica
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `nu_residencia`, `co_profissional_sus`
 - **Linhas medidas:** 201701: 4.353, 202501: 8.490
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
 |---|---|---|---|---|---|---|---|
-| `co_unidade` | VARCHAR2(31) | string | util | sim | `tbResidenciaMed` | 0/0 | Código do Estabelecimento de Saúde |
-| `nu_residencia` | NUMBER(8) | string | util | - | `tbResidenciaMed` | 0/0 | Sequencial de Residência |
-| `co_profissional_sus` | VARCHAR2(16) | string | util | - | `tbCargaHorariaSus` | 0/0 | Código do Profissional de Saúde |
-| `co_cbo` | VARCHAR2(6) | category | util | - | `tbCargaHorariaSus` | 0/0 | Código Brasileiro de Ocupação |
+| `co_unidade` | VARCHAR2(31) | string | util | sim | `tbEstabelecimento` | 0/0 | Código do Estabelecimento de Saúde |
+| `nu_residencia` | NUMBER(8) | string | util | - | - | 0/0 | Sequencial de Residência Componente de chave estrangeira composta no dicionário (tbResidenciaMed); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_profissional_sus` | VARCHAR2(16) | string | util | - | - | 0/0 | Código do Profissional de Saúde Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `co_cbo` | VARCHAR2(6) | category | util | - | - | 0/0 | Código Brasileiro de Ocupação Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `ind_vinculacao` | CHAR(6) | category | util | - | - | 0/0 | Indica a vinculação, o tipo e o sub tipo de vínculo do Profissional com o Estabelecimento |
-| `tp_sus_nao_sus` | CHAR(1) | category | util | - | `tbCargaHorariaSus` | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) |
+| `tp_sus_nao_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR(16) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
 | `to_chardt_atualizacao_origemddmmyyyy` | DATE | string | descartada | - | - | 100/100 | filtro semântico: Data da primeira entrada no Banco de Produção Federal |
@@ -1168,6 +1292,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_QUIMIO_RADIO` — Quimioterapia e Radioterapia
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`
 - **Linhas medidas:** 201701: 985, 202501: 1.305
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1211,7 +1336,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `no_mr_rad` | VARCHAR2(60) | string | descartada | - | - | 70/72 | filtro semântico: Nome do Radioterapeuta |
 | `no_mrfis` | VARCHAR2(60) | string | descartada | - | - | 71/73 | filtro semântico: Nome do Físico Nuclear |
 | `co_cpfmronc` | VARCHAR2(11) | string | descartada | - | - | 31/34 | filtro semântico: CPF do Oncologista Clínico |
-| `no_mrong` | VARCHAR2(60) | string | descartada | - | - | n/m | filtro semântico: Nome do Oncologista Clínico |
+| `no_mronc` | VARCHAR2(60) | string | descartada | - | - | 0/0 | filtro semântico: Nome do Oncologista Clínico. Estava grafada `no_mrong`, nome que não existe nem no dicionário nem no CSV |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(12) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
 | `to_chardt_atualizacao_origemddmmyyyy` | DATE | string | descartada | - | - | 100/100 | filtro semântico: Data da Primeira entrada no Banco de Produção Federal |
@@ -1224,6 +1349,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_RESIDENCIA_MED` — Residência Terapêutica
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `sq_residencia`
 - **Linhas medidas:** 201701: 902, 202501: 1.293
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1245,8 +1371,8 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 | `nu_capacidade_masc` | NUMBER(4) | Int64 | util | - | - | 0/0 | Capacidade de Residência para o Sexo Masculino |
 | `nu_capacidade_fem` | NUMBER(4) | Int64 | util | - | - | 0/0 | Capacidade de Residência para o Sexo Feminino |
 | `co_profissional_sus` | VARCHAR2(16) | string | descartada | - | - | 0/0 | filtro semântico: Código do Profissional de Saúde |
-| `co_cbo` | VARCHAR2(6) | string | descartada | - | `tbCargaHorariaSus` | 0/0 | filtro semântico: Código Brasileiro de Ocupação |
-| `tp_sus_nao_sus` | CHAR(1) | category | util | - | `tbCargaHorariaSus` | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) |
+| `co_cbo` | VARCHAR2(6) | string | descartada | - | - | 0/0 | filtro semântico: Código Brasileiro de Ocupação Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
+| `tp_sus_nao_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Profissional faz Atendimento ao SUS (S-Sim, N-Não) Componente de chave estrangeira composta no dicionário (tbCargaHorariaSus); mantida como atributo porque o join por uma coluna só não resolve |
 | `ind_vinculacao` | CHAR(6) | string | descartada | - | - | 0/0 | filtro semântico: Indica a vinculação, o tipo e o sub tipo de vínculo |
 | `dt_ativacao` | DATE | datetime64[ns] | util | - | - | 0/1 | Data de Ativação da Residência |
 | `dt_desativacao` | DATE | datetime64[ns] | util | - | - | 97/97 | Data de Desativação da Residência |
@@ -1264,6 +1390,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_SEGMENTO` — Segmentos
 - **Escopo:** incluida
 - **Chave primária:** `co_municipio`
+- **Chave natural:** `co_municipio`, `co_segmento`
 - **Linhas medidas:** 201701: 16.580, 202501: 21.170
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -1284,6 +1411,7 @@ ainda não verificadas contra os dados. Confirmar sua unicidade é item do
 - **Dicionário:** `TB_SERVICO_REFERENCIADO` — Serviço Referenciado
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_servico_referenciado`, `tp_servico_referenciado`, `co_cnpj`
 - **Linhas medidas:** 201701: 14.320, 202501: 16.774
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |

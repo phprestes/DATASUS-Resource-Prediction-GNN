@@ -11,11 +11,18 @@ comparar as duas coisas é o objetivo do trabalho.
 A partição é feita por **transição**, nunca por linha. Ver
 docs/02-metodologia.md, seção 6.1, e docs/03-decisoes.md, D-08 e D-11.
 
-Com os nove snapshots anuais de 01/2017 a 01/2025:
+A divisão é derivada, nunca escrita à mão: as `n_teste` transições mais recentes
+vão para teste, as `n_validacao` anteriores para validação, o resto treina. Com os
+dez snapshots anuais de 01/2017 a 01/2026 (D-29):
 
-    treino      2018 2019 2020 2021 2022
-    validação   2023 2024
-    teste       2025
+    treino      2018 2019 2020 2021 2022 2023
+    validação   2024 2025
+    teste       2026
+
+Antes de 202601 entrar, o mesmo código produzia treino até 2022, validação
+2023–2024 e teste 2025 — que é a divisão sob a qual D-24 e D-26 foram medidas.
+Acrescentar uma competência **move a janela**, então resultado antigo e novo não
+são comparáveis sem reexecutar o experimento.
 
 Cada rótulo é o período de destino da transição.
 """

@@ -144,10 +144,20 @@ def diff_tabela(
     # com WHERE FALSE — zero linhas, mas o mesmo schema, o que mantém os tipos
     # do join corretos. Tudo então conta como inserção, ou como remoção.
     presente = origem if origem.exists() else destino
+    # A comparação usa só as colunas presentes nos **dois** lados. Três tabelas
+    # têm colunas que somem e voltam entre competências (D-20), e tomar a lista
+    # de um lado só faz o SELECT do outro referenciar coluna inexistente: o diff
+    # morria com Binder Error e a transição desaparecia do resumo sem que a taxa
+    # de mudança acusasse falta. Comparar a interseção é o que dá para afirmar —
+    # uma coluna que não existe num dos snapshots não mudou nem deixou de mudar.
+    presentes_nos_dois = set(_colunas_do_parquet(con, presente))
+    if origem.exists() and destino.exists():
+        presentes_nos_dois &= set(_colunas_do_parquet(con, destino))
+        presentes_nos_dois &= set(_colunas_do_parquet(con, origem))
     colunas = [
         c
         for c in _colunas_do_parquet(con, presente)
-        if c in CNES_EXTRACT_COLUMNS[tabela]
+        if c in CNES_EXTRACT_COLUMNS[tabela] and c in presentes_nos_dois
     ]
     chave, chave_declarada = _chave_de(tabela, colunas)
     valores = [c for c in colunas if c not in chave and not AUDITORIA.match(c)]

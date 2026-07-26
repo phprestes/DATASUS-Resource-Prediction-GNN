@@ -19,9 +19,12 @@ from src.splits import (
     verificar_sem_vazamento,
 )
 from src.changes import Transicao
+from src.extract import PERIODOS_ANUAIS
 
-# Os nove snapshots anuais da amostra canônica.
-ANUAIS = [f"{ano}01" for ano in range(2017, 2026)]
+# A amostra canônica, lida de src/extract.py em vez de reescrita aqui: a série
+# cresce um janeiro por ano (D-29), e uma lista duplicada neste arquivo passaria
+# a testar uma amostra que não é mais a do projeto.
+ANUAIS = list(PERIODOS_ANUAIS)
 
 
 def destinos(grupo) -> list[str]:
@@ -32,10 +35,12 @@ def test_particao_canonica_bate_com_a_metodologia():
     """A tabela da seção 6.1 de docs/02-metodologia.md, em código."""
     p = particionar(ANUAIS)
 
-    assert destinos(p.treino) == ["201801", "201901", "202001", "202101", "202201"]
-    assert destinos(p.validacao) == ["202301", "202401"]
-    assert destinos(p.teste) == ["202501"]
-    assert p.fim_do_treino == "202201"
+    assert destinos(p.treino) == [
+        "201801", "201901", "202001", "202101", "202201", "202301",
+    ]
+    assert destinos(p.validacao) == ["202401", "202501"]
+    assert destinos(p.teste) == ["202601"]
+    assert p.fim_do_treino == "202301"
 
 
 def test_corte_do_grafo_e_anterior_a_todos_os_rotulos():
@@ -57,10 +62,11 @@ def test_corte_do_grafo_e_anterior_a_todos_os_rotulos():
     assert all(p.antes_de_todos_os_rotulos < t.destino for t in todos)
 
 
-def test_nove_snapshots_produzem_oito_transicoes():
+def test_n_snapshots_produzem_n_menos_uma_transicoes():
+    """Nenhuma transição pode se perder ou ser contada duas vezes."""
     p = particionar(ANUAIS)
     total = len(p.treino) + len(p.validacao) + len(p.teste)
-    assert total == len(ANUAIS) - 1 == 8
+    assert total == len(ANUAIS) - 1
 
 
 def test_particao_e_cronologica_nunca_sorteada():
@@ -72,7 +78,7 @@ def test_particao_e_cronologica_nunca_sorteada():
 def test_conjunto_de_localiza_a_transicao():
     p = particionar(ANUAIS)
     assert p.conjunto_de(Transicao("201701", "201801")) == "treino"
-    assert p.conjunto_de(Transicao("202401", "202501")) == "teste"
+    assert p.conjunto_de(Transicao(ANUAIS[-2], ANUAIS[-1])) == "teste"
     assert p.conjunto_de(Transicao("209901", "210001")) is None
 
 
@@ -93,9 +99,10 @@ def test_excluir_pandemia_descarta_transicoes_que_tocam_2020_ou_2021():
         ("202201", "202301"),
         ("202301", "202401"),
         ("202401", "202501"),
+        ("202501", "202601"),
     ]
     assert not any("202001" in par or "202101" in par for par in pares)
-    assert destinos(p.teste) == ["202501"]
+    assert destinos(p.teste) == ["202601"]
 
 
 def test_snapshots_insuficientes_sao_recusados():
@@ -166,14 +173,14 @@ def test_feature_lendo_alem_do_fim_do_treino_e_recusada():
     """
     p = particionar(ANUAIS)
 
-    verificar_features_sem_vazamento(p, ["201701", "202001", "202201"])
+    verificar_features_sem_vazamento(p, ["201701", "202001", p.fim_do_treino])
 
     with pytest.raises(ErroParticao, match=r"posteriores ao fim da janela"):
-        verificar_features_sem_vazamento(p, ["201701", "202201", "202501"])
+        verificar_features_sem_vazamento(p, ["201701", p.fim_do_treino, ANUAIS[-1]])
 
 
 def test_resumo_lista_os_tres_conjuntos():
     resumo = particionar(ANUAIS).resumo()
     for nome in ("treino", "validacao", "teste"):
         assert nome in resumo
-    assert "202501" in resumo
+    assert ANUAIS[-1] in resumo

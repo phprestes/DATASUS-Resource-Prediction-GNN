@@ -58,8 +58,8 @@ de [`docs/03-decisoes.md`](docs/03-decisoes.md).
 
 | | |
 |---|---|
-| **Recorte espacial** | Estado de São Paulo — prefixo `35`, 645 municípios, ~136 mil estabelecimentos |
-| **Recorte temporal** | Nove snapshots anuais de janeiro, 01/2017 a 01/2025 |
+| **Recorte espacial** | Estado de São Paulo — prefixo `35`, 645 municípios, ~146 mil estabelecimentos em 01/2026 |
+| **Recorte temporal** | Dez snapshots anuais de janeiro, 01/2017 a 01/2026 (D-29) |
 | **Fonte** | Banco de produção federal, ZIPs de competência de `cnes.datasus.gov.br` |
 
 Não se usa TABNET nem a API ElasticCNES: as duas entregam dados agregados ou
@@ -79,8 +79,8 @@ consequências que o código anterior ignorava:
 - A resolução temporal real do estudo é o **espaçamento entre snapshots**, não a
   granularidade diária da coluna de data.
 
-Daí a unidade de análise ser a **transição** `t → t+1`, não a linha. Nove
-snapshots dão oito transições. O eixo temporal do grafo é a **data do snapshot**
+Daí a unidade de análise ser a **transição** `t → t+1`, não a linha. Dez
+snapshots dão nove transições. O eixo temporal do grafo é a **data do snapshot**
 (1º de janeiro), que é exata e uniforme.
 
 ### 2.3 A tarefa
@@ -101,7 +101,7 @@ sobrevive a uma mudança de formulação.
 
 **Descartadas.** Taxa de utilização `qt_uso / qt_existente`, degenerada (moda 1
 em ~69% das linhas nas duas colunas). Predição de leitos, alvo do código
-anterior: 2.718 eventos contra 34.571 de equipamentos.
+anterior: 3.062 eventos contra 40.880 de equipamentos, somando as nove transições.
 
 ### 2.4 As três trilhas
 
@@ -127,7 +127,8 @@ entre estabelecimentos com o mesmo equipamento — exatamente a estrutura que a
 trilha existe para testar.
 
 **Trilha 3** usa k-vizinhos mais próximos por distância de grande círculo sobre
-`nu_latitude`/`nu_longitude`, simetrizado. Alcança 85,7% dos estabelecimentos; a
+`nu_latitude`/`nu_longitude`, simetrizado. Alcança 87,3% dos estabelecimentos em
+01/2026; a
 comparação com as outras trilhas é sempre feita **sobre o mesmo subconjunto de
 nós**, senão mede diferença de amostra em vez de diferença de estrutura.
 
@@ -138,12 +139,17 @@ período seguinte, então divisão aleatória permitiria treinar no futuro:
 
 | Conjunto | Transições |
 |---|---|
-| Treino | 2018, 2019, 2020, 2021, 2022 |
-| Validação | 2023, 2024 |
-| Teste | 2025 |
+| Treino | 2018, 2019, 2020, 2021, 2022, 2023 |
+| Validação | 2024, 2025 |
+| Teste | 2026 |
 
-**Métricas.** A prevalência é 0,047% — um positivo a cada ~2.100 candidatos, 73
-milhões de pares para 34 mil eventos.
+A janela é derivada da série, não configurada: a transição mais recente testa, as
+duas anteriores validam, o resto treina. Cada competência nova desloca tudo um ano
+adiante — os resultados abaixo foram medidos com **teste em 2025**, sob a série de
+nove snapshots, e continuam válidos para aquela divisão.
+
+**Métricas.** A prevalência é 0,0472% — um positivo a cada ~2.100 candidatos, 86,7
+milhões de pares para 40,9 mil eventos.
 
 - **MAP@10 por estabelecimento** é a métrica de destaque. Responde à pergunta que
   o trabalho faz — quais equipamentos este estabelecimento provavelmente deveria
@@ -188,7 +194,9 @@ coordenada, e comparar métricas em populações diferentes mediria diferença d
 amostra, não de estrutura.
 
 **Teste 2025 · 117.146 estabelecimentos · 9.818.382 exemplos · 4.994 positivos ·
-prevalência 0,0507%**
+prevalência 0,0507%** — medido sobre a série de nove snapshots, antes de 202601
+entrar (D-29). Com dez snapshots o teste passa a ser 2026 e estes números pedem
+reexecução para serem comparáveis.
 
 | Modelo | Trilha | AP | AUC-ROC | MAP@10 |
 |---|---|---|---|---|
@@ -363,11 +371,11 @@ uv pip install pyg-lib torch-scatter torch-sparse \
 
 O caminho recomendado é o orquestrador, que processa uma competência por vez e
 descarta o DuckDB intermediário — o pico de disco fica em uma competência em vez
-de nove, e a execução é retomável:
+da série inteira, e a execução é retomável:
 
 ```bash
-python -m src.pipeline                      # série canônica: 9 snapshots anuais
-python -m src.pipeline --periodos 202401 202501
+python -m src.pipeline                      # série canônica: 10 snapshots anuais
+python -m src.pipeline --periodos 202501 202601
 python -m src.pipeline --pular-download     # se os ZIPs já estão em disco
 ```
 

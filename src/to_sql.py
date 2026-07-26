@@ -16,7 +16,8 @@ def process_cnes_zip(
         input_folder : Path = RAW_FOLDER,
         output_folder : Path = INTERMEDIATE_FOLDER,
         reprocess : bool = False,
-        only_fact_tables : bool = True
+        only_fact_tables : bool = True,
+        tabelas : "List[str] | None" = None
 ) -> None:
     """
     Carrega os CSV de cada ZIP de competência num DuckDB por competência.
@@ -24,7 +25,22 @@ def process_cnes_zip(
     Tudo entra como VARCHAR (`all_varchar=True`): a tipagem acontece só na
     conversão para Parquet, guiada por CNES_DTYPES. `reprocess=False` pula
     competências já convertidas, mesmo default dos outros estágios do ETL.
+
+    `tabelas` restringe a ingestão a um subconjunto. Serve para o caso em que
+    `01-selecao-tabelas.md` admite uma coluna nova e só uma tabela precisa voltar
+    ao ZIP — reprocessar a competência inteira custa dezenas de minutos e vários
+    gigabytes de DuckDB por nada. Cuidado: com `tabelas`, o DuckDB resultante é
+    **parcial**, e `to_parquet` executado sem argumento sobre ele exportaria só o
+    que estiver lá. Apague o intermediário depois de usar, ou passe o mesmo
+    subconjunto adiante.
     """
+    if tabelas is not None:
+        desconhecidas = [t for t in tabelas if t not in FACT_TABLES]
+        if desconhecidas:
+            raise ValueError(
+                f"tabelas fora do escopo de docs/01-selecao-tabelas.md: {desconhecidas}"
+            )
+        tabelas = set(tabelas)
     # Limpa diretório temporário se existir de execuções anteriores falhas
     if TEMP_EXTRACT_DIR.exists():
         shutil.rmtree(TEMP_EXTRACT_DIR)
@@ -51,6 +67,9 @@ def process_cnes_zip(
                     clean_name = stem_name[:-6]
                     
                     if only_fact_tables and clean_name not in FACT_TABLES:
+                        continue
+
+                    if tabelas is not None and clean_name not in tabelas:
                         continue
 
                     temp_csv_path = TEMP_EXTRACT_DIR / csv_file

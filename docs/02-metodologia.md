@@ -86,15 +86,19 @@ abrangência. Fora do escopo desta iteração; anotado como extensão possível.
 ## 3. Amostra
 
 - **Recorte espacial:** estabelecimentos do **estado de São Paulo**, prefixo
-  `35` de `co_municipio_gestor`, 645 municípios e cerca de 136 mil
+  `35` de `co_municipio_gestor`, 645 municípios e cerca de 146 mil
   estabelecimentos. O projeto original recortava só a capital; a expansão está
   em D-21 e foi feita porque quase triplica os eventos de aquisição (12.081 para
-  34.571) e porque um único município deixa a população do IBGE com variância
+  40.880 nas nove transições) e porque um único município deixa a população do
+  IBGE com variância
   zero, inutilizável como atributo. O recorte é um **prefixo de código IBGE**,
   então `'355030'` recupera a capital e `None` dá o país. O filtro é empurrado
   para dentro da leitura Parquet, não aplicado depois.
-- **Recorte temporal:** snapshots anuais de janeiro, 01/2017 a 01/2025, nove
-  pontos. O projeto original previa cinco snapshots bienais; a densidade foi
+- **Recorte temporal:** snapshots anuais de janeiro, 01/2017 a 01/2026, dez
+  pontos — eram nove até 202601 entrar (D-29), e a série cresce um janeiro por
+  ano. Nada no código conta snapshots à mão: quem precisa da lista usa
+  `changes.periodos_disponiveis()`, e a amostra canônica é
+  `src.extract.PERIODOS_ANUAIS`. O projeto original previa cinco snapshots bienais; a densidade foi
   dobrada porque cinco pontos com dois anos de intervalo não sustentam nenhuma
   afirmação sobre dinâmica temporal. A densidade final é confirmada
   empiricamente pelo `notebook/00_analise_alvo.ipynb`, que mede a taxa de
@@ -124,8 +128,8 @@ produção, não um log de eventos. Para cada linha, ele traz apenas a **última
   snapshots** — um ano — e não a granularidade diária da coluna de data.
 
 Daí a unidade de análise ser a **transição** `t → t+1`, materializada por
-[`src/changes.py`](../src/changes.py), e não a linha individual. Com nove
-snapshots há oito transições, rotuladas pelo ano de destino: 2018 a 2025.
+[`src/changes.py`](../src/changes.py), e não a linha individual. Com dez
+snapshots há nove transições, rotuladas pelo ano de destino: 2018 a 2026.
 
 O filtro "somente linhas que sofreram alteração", previsto no projeto original,
 é aplicado aqui como consequência dessa definição: uma linha inalterada entre
@@ -154,7 +158,7 @@ trabalho é a diferença entre elas.
 | **1. Baselines tabulares** | features achatadas por estabelecimento, sem relações | quanto do fenômeno se explica sem estrutura nenhuma |
 | **2. RDL relacional** | grafo do schema CNES inteiro (44 tabelas, pkey/fkey) | ganho de usar a estrutura relacional completa |
 | **3. GNN geográfica** | somente estabelecimentos e proximidade espacial | ganho da vizinhança física, sem o schema |
-| **4. Análise exploratória** | os nove snapshots | não é modelo: fixa alvo e parâmetros por evidência |
+| **4. Análise exploratória** | a série inteira de snapshots | não é modelo: fixa alvo e parâmetros por evidência |
 
 ### Trilha 1 — Baselines tabulares
 
@@ -187,8 +191,8 @@ enquanto a coluna de atualização é censurada à direita (seção 4). Uma linh
 presente no snapshot de 01/2021 significa "este fato valia em 01/2021", que é
 exatamente a semântica que um grafo temporal precisa.
 
-Cada tabela é portanto o empilhamento dos nove snapshots, com o período como
-eixo. O grafo carrega o **estado** da rede em cada instante; os eventos de
+Cada tabela é portanto o empilhamento de todos os snapshots disponíveis, com o
+período como eixo. O grafo carrega o **estado** da rede em cada instante; os eventos de
 `changes.py` fornecem os **rótulos** e, como variante de ablação, o filtro que
 mantém apenas linhas alteradas. Usar só os eventos para montar o grafo perderia
 o estado, e sem o estado não há vizinhança para a GNN observar.
@@ -213,7 +217,7 @@ a trilha ser considerada viável.
 
 `notebook/00_analise_alvo.ipynb`. Não produz modelo. Produz as decisões que as
 outras três consomem: qual alvo, qual densidade de snapshot, quais colunas
-sobrevivem ao filtro empírico nos nove snapshots, e se a trilha 3 é viável.
+sobrevivem ao filtro empírico em toda a série, e se a trilha 3 é viável.
 Roda antes das trilhas 1 a 3 e é ponto de decisão bloqueante.
 
 ## 6. Protocolo de avaliação
@@ -225,9 +229,15 @@ três trilhas de modelagem. Partição por **transição**, nunca por linha:
 
 | Conjunto | Transições | Snapshots envolvidos |
 |---|---|---|
-| Treino | 2018, 2019, 2020, 2021, 2022 | 01/2017 a 01/2022 |
-| Validação | 2023, 2024 | 01/2022 a 01/2024 |
-| Teste | 2025 | 01/2024 a 01/2025 |
+| Treino | 2018, 2019, 2020, 2021, 2022, 2023 | 01/2017 a 01/2023 |
+| Validação | 2024, 2025 | 01/2023 a 01/2025 |
+| Teste | 2026 | 01/2025 a 01/2026 |
+
+A tabela é consequência, não configuração: `particionar` toma a transição mais
+recente para teste, as duas anteriores para validação, e o resto treina. Cada
+competência nova **move a janela** um ano adiante. Os resultados de D-24 e D-26
+foram medidos com teste em 2025 e validação em 2023–2024; comparar com número
+novo exige reexecutar o experimento, não reler a tabela.
 
 Regras que a implementação precisa garantir, e que os testes verificam:
 

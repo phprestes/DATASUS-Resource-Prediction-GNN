@@ -14,7 +14,8 @@ Four Markdown files in [docs/](docs/) are the project's contract. They are not s
 
 - **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/schema.py](src/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
 - **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
-- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 26 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 31 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/DICIONARIO_DE_DADOS.pdf](docs/DICIONARIO_DE_DADOS.pdf)** — the DATASUS data dictionary (2025 edition), 155 pages. It describes the **Oracle** database, not the distributed CSV: the extraction exports a subset of the columns and renames some. Where the two disagree, the CSV wins. Read it with `pdftotext -layout`, never page by page.
 
 `docs/SelecaoTabelas_v1.pdf` and `_v2.pdf` are historical records, superseded by `01-selecao-tabelas.md`. `docs/CNES_GNN-2.pdf` is the original project proposal; the code has deliberately diverged from it (see D-01).
 
@@ -26,8 +27,8 @@ Python 3.12 in `.venv`, managed by **uv** (there is no `pip` inside it). Package
 source .venv/bin/activate
 
 # ETL. Each stage reads the previous layer and writes the next.
-python -m src.extract              # 9 annual ZIPs -> data/01_raw   (~2.9 GB)
-python -m src.extract 202501       # or specific competências
+python -m src.extract              # 10 annual ZIPs -> data/01_raw  (~3.6 GB)
+python -m src.extract 202601       # or specific competências
 python -m src.to_sql               # ZIP CSVs -> DuckDB per period  -> data/02_intermediate
 python -m src.to_parquet           # DuckDB -> typed Parquet        -> data/03_primary
 python -m src.changes              # snapshot diffs -> change events -> data/04_feature
@@ -46,7 +47,7 @@ All ETL stages default to `reprocess=False` (skip what exists) — the series is
 
 `data/01_raw` (`BASE_DE_DADOS_CNES_{YYYYMM}.ZIP`) → `data/02_intermediate` (`sql_cnes_{YYYYMM}.duckdb`) → `data/03_primary` (`{YYYYMM}/{tabela}.parquet`) → `data/04_feature/changes/{tabela}/{periodo}.parquet`. Nothing under `data/` is versioned; it is all reproducible from stage 1.
 
-The period is always the 6-char string `YYYYMM` ("competência") and is the partition key everywhere. The canonical sample is `src.extract.PERIODOS_ANUAIS` — January of each year, 2017–2025, nine snapshots and eight transitions (D-04).
+The period is always the 6-char string `YYYYMM` ("competência") and is the partition key everywhere. The canonical sample is `src.extract.PERIODOS_ANUAIS` — January of each year, 2017–2026, ten snapshots and nine transitions (D-04, extended by D-29). Never hardcode the count: `changes.periodos_disponiveis()` reads the primary layer, `PERIODOS_ANUAIS` is the intended series, and `ANO_FINAL` in `extract.py` is the single place a new January is added.
 
 ### Time is the subtle part
 
@@ -76,9 +77,11 @@ Read this before touching anything temporal. A competência ZIP is a **snapshot 
 ### Conventions that will bite you
 
 - **CSV naming.** Files inside the ZIP are `{TableName}{YYYYMM}.csv`. [to_sql.py](src/to_sql.py) strips the 6-char period to match `FACT_TABLES` but creates the DuckDB table under the **full suffixed name** (`tbEstabelecimento201701`); [to_parquet.py](src/to_parquet.py) strips it again. Changing the period width breaks both.
-- **Everything is VARCHAR at the intermediate layer.** Ingest uses `all_varchar=True`, `normalize_names=True`, `sep=';'`, `encoding='ISO_8859_1'`. Typing happens only in `to_parquet`, driven by `CNES_DTYPES`. `datetime64[ns]` triggers `try_strptime` with `%d/%m/%Y` and nulls dates before 1900-01-01 (a CNES sentinel).
+- **Everything is VARCHAR at the intermediate layer.** Ingest uses `all_varchar=True`, `normalize_names=True`, `sep=';'`, `encoding='ISO_8859_1'`. Typing happens only in `to_parquet`, driven by `CNES_DTYPES`. `datetime64[ns]` triggers `try_strptime` with `%d/%m/%Y` and nulls dates before 1900-01-01 (a CNES sentinel); string and category columns get `NULLIF(TRIM(...), '')`, because Oracle `CHAR(n)` arrives space-padded and the padding **changes when CNES widens a column** — that is D-30, and it silently broke every cross-snapshot comparison of `co_tipo_equipamento`.
+- **Both ETL stages take `tabelas=[...]`.** Admitting a column in `01-selecao-tabelas.md` means the existing Parquet lacks it; reprocessing only the affected tables costs minutes instead of hours. The intermediate DuckDB produced that way is **partial** — delete it afterwards, or a later `to_parquet` run over it exports only those tables.
 - **Three name spellings for the same thing.** Oracle dictionary (`RL_ESTAB_COMPLEMENTAR`), CSV/DuckDB (`rlEstabComplementar`), and date columns wrapped in the extraction's own SQL (`TO_CHAR(DT_ATUALIZACAO,'DD/MM/YYYY')` → `to_chardt_atualizacaoddmmyyyy`, sometimes with a table alias inside: `to_charadt_atualizacaoddmmyyyy`). Documented in `01-selecao-tabelas.md`.
-- **`pkey` is not a row key.** `CNES_PKEY` is the *entity* key RelBench joins on (`co_unidade`) and is almost never unique — `rlEstabEquipamento` has one row per equipment, not per establishment. Row identity is `CNES_NATURAL_KEY`, declared per table where known.
+- **`pkey` is not a row key.** `CNES_PKEY` is the *entity* key RelBench joins on (`co_unidade`) and is almost never unique — `rlEstabEquipamento` has one row per equipment, not per establishment. Row identity is `CNES_NATURAL_KEY`: **42 of the 44** tables declare one, every tuple verified to have zero duplicates across every snapshot (D-27). The two without are `rlEstabServClass` (the dictionary's key duplicates — and it is the first-choice alternative target) and `rlEstabSipac`. The dictionary's key is not authority: for `rlMunUnidAcolhim` it duplicates in every snapshot and needed `co_municipio` added. Adding a key changes `changes.py` output, so re-run `python -m src.changes` with `reprocess=True` after editing one.
+- **`fkey_para` only when the column holds values of the destination's pkey.** The dictionary's foreign keys are composite and this format writes one column per row, so transcribing them column by column produced 33 declarations that join nothing — measured, literally zero matching values (D-28). `co_unidade` always points at `tbEstabelecimento`. Don't re-add component FKs; the composite case is unexpressible today.
 - **Tables hold `pyarrow.Table`, not `pandas.DataFrame`.** Deliberate: the municipality filter is pushed into the Parquet scan. Call `.to_pandas()` explicitly; don't assume pandas.
 - **`recorte` is the main cost lever.** [graph.py](src/graph.py) filters the root on `co_municipio_gestor` by IBGE-code prefix, then pushes the resulting `co_unidade` set as an `isin` predicate into every child table's scan. Without it you load the whole country.
 
@@ -90,16 +93,16 @@ Track 1 must stay free of relational and spatial features. Adding neighbourhood 
 
 ## Numbers you should know before proposing anything
 
-Measured on the nine annual snapshots, São Paulo. These constrain what is worth trying.
+Measured on São Paulo. Figures below marked *(9 snapshots)* were taken before 202601 entered the series (D-29); the split moved with it, so any comparison against a new run needs the experiment re-run, not just the numbers re-read.
 
-- **Scope is the state of São Paulo**, prefix `35` — 136k establishments, 645 municípios. It was the capital only; D-21 widened it because that nearly triples acquisition events and gives IBGE population non-zero variance. `recorte` is an IBGE-code *prefix*: `'355030'` gets the capital back, `None` the country.
-- **Target.** `rlEstabEquipamento` yields 34,571 acquisition events across the eight transitions at state scope; `rlEstabComplementar` (beds) yields 688 in the capital alone. That is why the target moved (D-01, D-18).
-- **Prevalence is 0.047%** at state scope — 73M candidates for 34k events. Two candidate-space restrictions were tested and rejected (D-19). Don't propose a third without measuring first. **MAP@k is the headline metric**, and D-24 shows why in practice: AP and MAP@10 rank the baselines differently.
+- **Scope is the state of São Paulo**, prefix `35` — 146.5k establishments in 202601 (136k in 202501), 645 municípios. It was the capital only; D-21 widened it because that nearly triples acquisition events and gives IBGE population non-zero variance. `recorte` is an IBGE-code *prefix*: `'355030'` gets the capital back, `None` the country.
+- **Target.** `rlEstabEquipamento` yields **40,880** acquisition events across the nine transitions at state scope — 34,571 over the eight transitions before 202601 (D-29). `rlEstabServClass` yields 42,208 and stays the runner-up; `rlEstabComplementar` (beds) yields 3,062. That is why the target moved (D-01, D-18) and why it stayed.
+- **Prevalence is 0.0472%** at state scope — 86.7M candidates for 40.9k events. Two candidate-space restrictions were tested and rejected (D-19). Don't propose a third without measuring first. **MAP@k is the headline metric**, and D-24 shows why in practice: AP and MAP@10 rank the baselines differently.
 - **The bar to beat is MAP@10 = 0.296** (`popularidade_item`), not the persistence floor. Persistence returns AP exactly equal to prevalence and AUC exactly 0.500 — if it ever doesn't, the harness is broken (D-24).
 - **Results are in** (D-26, paired on 117k positionable establishments): `gnn_relacional` AP 0.00478 / MAP@10 0.213; `gnn_geografica` 0.00378 / 0.208; `gbdt_geral` 0.00280 / 0.252; `popularidade_item` 0.00215 / **0.296**; `persistencia` 0.00051 / 0.035. **The GNNs win AP and AUC and lose MAP@10** — they learned the establishment dimension, not the item dimension. The next experiment is a combined score (GNN + item-popularity log-odds); don't propose architecture changes before running it.
 - **The paired table is the one that counts.** Prevalence is 0.0507% on positionable establishments vs 0.0428% overall — the subset is 18% richer in positives, so unpaired comparison flatters track 3.
-- **Change rate is flat**: 0.082–0.112 per year, median 0.094, no pandemic spike. Annual density is settled (D-10).
-- **Coordinates cover 85.7%** at state scope, 75.0% in the capital. D-17 said 57% — that was measured on six of nine snapshots and is superseded by D-22.
+- **Change rate is flat**: 0.079–0.110 per year on the target, median 0.092 over the nine transitions, no pandemic spike. Annual density is settled (D-10). If a table ever shows a rate near 1.0, suspect a key or a padding change before believing the data (D-27, D-30).
+- **Coordinates cover 87.3%** at state scope in 202601 (85.7% in 202501, 75.0% in the capital), 87.2% accumulated over the ten snapshots. Rising ~1.6 points a year. D-17 said 57% — measured on six of nine snapshots, superseded by D-22.
 - **The schema drifts.** Three of 44 tables have columns that vanish and return, with 201901 the anomalous competência. Reading several Parquet files directly via DuckDB needs `union_by_name=true` (D-20).
 
 ## Memory is a hard constraint

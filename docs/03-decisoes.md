@@ -626,6 +626,26 @@ ser tolerante a isso:
 dos nove snapshots, e descartá-las por causa de uma competência anômala custaria
 mais informação do que o problema que resolve.
 
+**Revisão de 2026-07-26 — a extensão é maior, e o sentido do desvio muda.** A
+medição acima partiu das colunas que o doc já declarava. Conferindo os *headers*
+dos nove ZIPs contra o doc apareceram mais duas colunas instáveis, ambas em
+`tbEstabelecimento` e ambas até então não declaradas (D-27/D-28 as admitem):
+
+| Tabela | Coluna | Presente em |
+|---|---|---|
+| `tbEstabelecimento` | `co_tipo_abrangencia` | 201701, 201801, 202401, 202501 |
+| `tbEstabelecimento` | `st_coworking` | 201701, 201801, 202501 |
+
+E uma tabela inteira falta: `rlEquipeAldeia` não tem CSV em 201901.
+
+Isso não desmente "201901 anômala", mas mostra que o desvio tem duas formas
+diferentes. Uma coluna que existe em 2017–2018, desaparece por cinco ou seis
+competências e volta em 2024–2025 não é ruído de uma competência: é campo
+desativado e reativado no formulário do CNES. A conclusão operacional continua a
+mesma — projetar o que existe, `union_by_name=true` sempre —, mas o número de
+tabelas afetadas é **quatro**, não três, e a verificação que faltava (header do
+CSV contra o doc) virou célula fixa do `notebook/00_analise_alvo.ipynb`.
+
 ---
 
 ## D-21 — Recorte passa do município de São Paulo para o estado
@@ -941,3 +961,285 @@ numa população mais fácil.
 Não diz que o modelo identifica escassez. Diz que aquisição de equipamento é
 parcialmente previsível a partir da estrutura da rede. A ponte entre as duas
 coisas continua sendo a inferência declarada em D-02, e continua sendo hipótese.
+
+## D-27 — Chave natural: de 2 para 42, tiradas do dicionário e verificadas
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+`docs/01-selecao-tabelas.md` declarava chave natural para duas tabelas —
+`rlEstabEquipamento` e `rlEstabComplementar` (D-18, veredito 2 do notebook 00).
+As outras 42 caíam no modo sem chave de `src/changes.py`, em que cada modificação
+conta como remoção mais inserção e a taxa de mudança sai inflada. O veredito 3
+registrou isso como limitação; era limitação evitável.
+
+**Agora são 42 das 44**, e nenhuma por dedução — cada tupla foi testada contra
+todos os snapshots e tem zero duplicatas em todos. Três origens:
+
+| Origem | Tabelas | Exemplo |
+|---|---|---|
+| PRIMARY KEY composta do dicionário | 25 | `rlEstabInstFisiAssist` = `co_unidade` + `co_instalacao` |
+| Chave primária de uma coluna, quando é de fato única | 9 | `tbEstabelecimento` = `co_unidade` |
+| Menor combinação única encontrada por busca | 8 | `rlEstabAvaliacao` = `co_unidade` + `co_avaliacao` + `to_chardt_avaliacaoddmmyyyy` |
+
+A terceira origem cobre dois casos: coluna que no CSV tem outro nome que no
+dicionário, e chave do dicionário que simplesmente **não** identifica a linha.
+`rlMunUnidAcolhim` é do segundo tipo e mostra por que medir importa — o
+dicionário dá `co_unidade` + `sq_acolhimento`, tupla que duplica em todos os nove
+snapshots (43 linhas de 80 em 201701). Falta `co_municipio`: a tabela liga cada
+município atendido a uma unidade de acolhimento, então o município é parte da
+identidade. Para testar isso foi preciso primeiro reclassificar `sq_acolhimento`
+de `descartada` para `util`, e regenerar a tabela na camada primária.
+
+### As duas chaves antigas estavam infladas
+
+`tp_sus` e `co_tipo_leito` são redundantes:
+
+```
+rlEstabEquipamento  (co_unidade, co_equipamento, co_tipo_equipamento)  única
+rlEstabComplementar (co_unidade, co_leito)                             única
+```
+
+Ambos os subconjuntos coincidem com a PK do dicionário. Chave inflada não é
+inofensiva: com `tp_sus` dentro dela, uma linha que apenas troca a
+disponibilidade SUS de 1 para 2 conta como remoção mais inserção, que é o
+comportamento que a chave natural existe para evitar. As duas foram encurtadas.
+
+### As duas que ficaram de fora
+
+- `rlEstabServClass` — a PK composta do dicionário **não** identifica a linha:
+  561 duplicatas em 201701, 822 em 201801, 1.159 em 201901. Nenhuma combinação de
+  até quatro colunas materializadas resolve. Importa porque ela é o alvo
+  alternativo de primeira escolha (D-18): trocar de alvo exige antes resolver a
+  identidade de linha dela.
+- `rlEstabSipac` — mesma situação com seis colunas candidatas. É a tabela que o
+  dicionário descreve em sete views diferentes.
+
+### Consequências medidas
+
+- **Taxa de mudança recalculada** (`detectar_mudancas(reprocess=True)`, 349 pares
+  tabela-transição). O alvo passa a **0,110 · 0,091 · 0,097 · 0,097 · 0,092 ·
+  0,083 · 0,079 · 0,087**, mediana 0,091 contra 0,094 de D-10. **A conclusão de
+  D-10 não muda**: série plana entre 0,079 e 0,110, sem pico de pandemia,
+  densidade anual adequada. A diferença é a esperada — 11 a 17 mil eventos por
+  transição migraram de remoção-mais-inserção para `alterada`.
+- **`tbEstabelecimento` deixa de ter taxa acima de 1,0.** Era o artefato que o
+  veredito 3 mandava ler como "comportamento documentado, não defeito dos dados":
+  sem chave, toda linha alterada contava duas vezes. Com `co_unidade` declarada, a
+  taxa cai para 0,83 na primeira transição e 0,17–0,25 nas seguintes, e
+  `alterada` passa a ser preenchida.
+- **`src/gnn.py::escolher_categoria`** preferia `natural[0]` como vocabulário de
+  categorias do grafo. Com 41 chaves declaradas isso passaria a escolher
+  `co_municipio` (um nó por município, ligando todos os estabelecimentos da
+  cidade) ou sequenciais como `co_seq_central` e `sq_acolhimento` (um nó por
+  linha, que é exatamente o que D-25 removeu). A função passa a exigir `dtype`
+  `category` e a recusar colunas de município, com o município como último
+  recurso para as quatro tabelas que não têm outra categoria. Efeito líquido
+  sobre o grafo: as mesmas 36 tabelas, e **uma** muda de categoria em relação ao
+  comportamento anterior — `rlEquipeNasfEsf`, de `co_municipio_esf` para
+  `tp_equipe_esf`, que é melhora. D-26 continua comparável.
+
+### Rejeitado
+
+Declarar chave natural por dedução, sem medir. Foi como as duas primeiras
+nasceram, e as duas estavam certas — mas `rlEstabServClass` mostra que a dedução
+falha, e falha justamente na tabela em que se ia confiar nela.
+
+## D-28 — Chave estrangeira só quando casa com a pkey do destino
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+O dicionário do CNES tem chaves estrangeiras **compostas**. O formato de
+`01-selecao-tabelas.md` escreve uma coluna por linha, e o RelBench lê cada
+`fkey_para` como join da coluna contra a *pkey do destino*. A transcrição
+coluna-a-coluna perdeu a composição e produziu 33 declarações em que os valores
+da coluna não são valores da pkey do destino.
+
+Medido em 202501, o resultado é aresta vazia:
+
+```
+rlEstabEquipeProf.co_cbo  x tbCargaHorariaSus.co_unidade -> 0 de 312 valores casam
+rlEstabEquipeProf.co_area x tbEquipe.co_municipio        -> 0 de 3.622 valores casam
+```
+
+Pior, `rlEstabEquipeProf.co_unidade` apontava para `tbCargaHorariaSus` e não para
+a raiz: a tabela de profissionais das equipes, com 815 mil linhas, era a única
+tabela de fato do escopo **sem aresta para `tbEstabelecimento`**. O destino
+declarado também não serve como âncora — `tbCargaHorariaSus.co_unidade` tem 6,1
+milhões de linhas para 448 mil unidades, ou seja não é chave. `tbProfResidencia`
+tinha o mesmo problema, apontando para `tbResidenciaMed`.
+
+**Regra adotada:** `fkey_para` só quando a coluna contém valores da chave
+primária declarada do destino; `co_unidade` sempre aponta para
+`tbEstabelecimento`, a única tabela cuja pkey é de fato única por snapshot
+(560.166 linhas, 560.166 valores em 202501). Os 31 componentes restantes viraram
+atributo, com a razão registrada na justificativa da coluna.
+
+### O que continua torto
+
+As ligações com a equipe sobraram pela componente de município
+(`co_municipio -> tbEquipe`, `co_municipio -> tbArea`,
+`co_municipio -> tbSegmento`): casam 100% dos valores, mas ligam a linha a
+*todas* as equipes daquele município. Não é aresta falsa, é aresta grossa demais.
+Resolver exige chave estrangeira composta, que nem este formato nem `schema.py`
+expressam hoje. Fica registrado como limitação conhecida, não como corrigido.
+
+Na prática ela hoje não chega ao grafo: `colunas_minimas_para_grafo` projeta cada
+tabela filha em `co_unidade` mais a categoria (D-23), e `co_municipio` fica fora
+da projeção. O `Database` no recorte da capital sai com 33 tabelas e 32
+declarações de chave estrangeira, todas `co_unidade -> tbEstabelecimento` — uma
+estrela. Se algum dia a projeção crescer, a limitação acima volta a valer.
+
+### Rejeitado
+
+Manter as declarações "porque o dicionário diz". O dicionário diz que as cinco
+colunas *juntas* referenciam `TB_CARGA_HORARIA_SUS`; declarar cada uma sozinha
+não é uma aproximação disso, é outra afirmação — e essa é falsa nos dados.
+
+## D-29 — 202601 entra na série: dez snapshots, nove transições
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+A competência 01/2026 foi publicada e entrou. ZIP de 714 MB, 109 CSVs, as 44
+tabelas do escopo convertidas. A série canônica passa de nove para **dez**
+snapshots e de oito para **nove** transições.
+
+### O que a série nova diz
+
+| Medida | 9 snapshots | 10 snapshots |
+|---|---|---|
+| Aquisições de equipamento (SP) | 34.571 | **40.880** |
+| Candidatos | 73,4 M | 86,7 M |
+| Prevalência | 0,0465% | **0,0472%** |
+| Estabelecimentos no recorte | 136.561 | 146.500 |
+| Cobertura de coordenada | 85,67% | **87,27%** |
+
+A transição nova rende 6.309 aquisições, em linha com as anteriores — sem salto.
+A ordem entre alvos candidatos não muda: `rlEstabServClass` segue à frente em
+volume (42.208) e `rlEstabEquipamento` segue sendo o alvo pelas razões de D-18,
+nenhuma delas de volume. `rlEstabInstFisiAssist` passou de 51 para 56 itens; o
+vocabulário de equipamentos continua com 99.
+
+### A partição se move, e isso invalida comparação
+
+`particionar` sempre toma a transição mais recente para teste. Com dez snapshots:
+
+    treino      2018 2019 2020 2021 2022 2023
+    validação   2024 2025
+    teste       2026
+
+Antes era treino até 2022, validação 2023–2024, teste 2025 — a divisão sob a qual
+D-24 e D-26 foram medidas. **Aqueles números continuam válidos para aquela
+divisão e não são comparáveis com um número novo.** Reexecutar
+`tools/roda_experimento.py` é o que produz a tabela sob a série de dez.
+
+### Três colunas novas no CSV de 202601
+
+Apareceram na conferência de header contra o doc, não no dicionário — que é de
+2025 e não as tem:
+
+| Coluna | Classificação | Por quê |
+|---|---|---|
+| `rlEstabEquipamento.qt_sus` | `util` | Quantidade de equipamentos disponíveis ao SUS; desdobra o sinalizador `tp_sus` e é candidata à tarefa secundária de regressão (D-02) |
+| `rlEstabEqpEmbarcacao.tp_veiculo` | `util` | `E`/`P`; a tabela de "embarcações de apoio" passou a comportar veículo terrestre |
+| `rlEstabEqpEmbarcacao.no_registro_veiculo` | `descartada` | Identifica um veículo específico (placa, RNM, casco); 89,1% nula |
+
+`qt_sus` existe em uma única competência, então não sustenta série — está
+declarada para que a próxima competência a encontre já classificada, não para
+entrar em feature agora.
+
+### Onde "nove" estava cravado no código
+
+- `src/extract.py` — `ANO_INICIAL`/`ANO_FINAL`, e `PERIODOS_ANUAIS` derivado. É o
+  único lugar onde se acrescenta um janeiro.
+- `src/graph.py::CNESDataset` — `val_timestamp` e `test_timestamp` eram literais
+  `202301` e `202501`. Agora saem de `particionar(periodos_disponiveis())`. Um
+  literal ali faria o RelBench avaliar num período que a partição chama de treino.
+- `tests/test_splits.py` — a lista `ANUAIS` era reescrita no arquivo de teste;
+  passa a vir de `PERIODOS_ANUAIS`, e há `tests/test_extract.py` guardando a forma
+  da série.
+- `notebook/00_analise_alvo.ipynb` — o aviso de série incompleta comparava com `9`.
+
+### Verificações reexecutadas sobre os dez snapshots
+
+- Triagem empírica de D-06: **zero rejeições**.
+- As 42 chaves naturais de D-27: **zero duplicatas**, em todas as dez.
+- Conferência header do CSV contra o doc: as três colunas acima, e nada mais.
+- Taxa de mudança do alvo: 0,110 · 0,091 · 0,097 · 0,097 · 0,092 · 0,083 · 0,079 ·
+  0,087 · **0,097**, mediana 0,092, amplitude 0,079–0,110. Série ainda plana,
+  **D-10 segue fechada**.
+
+Duas coisas quebraram no caminho, e as duas eram bugs que a série de nove
+esconde: D-30 e D-31.
+
+## D-30 — `CHAR` do Oracle chega com espaço, e o preenchimento muda
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+**Sintoma.** Com 202601 na série, a taxa de mudança de `rlEstabEquipamento` na
+transição nova deu **1,94**: 1.323.329 inserções e 1.247.979 remoções, zero
+alterações. Ou seja, a tabela inteira foi contada como substituída.
+
+**Causa.** O CNES alargou `CO_TIPO_EQUIPAMENTO` de `CHAR(1)` para `CHAR(2)` em
+202601 — há um tipo `10` novo — e os valores antigos passaram a vir preenchidos
+com espaço:
+
+```
+202501: '1', '2', ... '9'
+202601: '1 ', '2 ', ... '9 ', '10'
+```
+
+`'1' <> '1 '`, então nenhuma linha casou pela chave natural. Medido: o join entre
+as duas competências pela chave dava **0** linhas.
+
+**Extensão.** O preenchimento não é novo, é traço do CNES. Seis colunas já vinham
+com espaço em **todas** as competências — `rlEstabComplementar.co_tipo_leito`,
+`rlEstabProgFundo.tp_estadual_municipal`, `rlEstabServicoApoio.co_caracteristica`
+e três de `tbMantenedora`. Por serem consistentes, nunca deram problema. O que
+quebra é o preenchimento **mudar** no meio da série.
+
+**Correção.** `to_parquet` passa a aplicar `NULLIF(TRIM(...), '')` nas colunas de
+destino `string` e `category`. Espaço à direita não é valor, e string só de espaço
+é ausência. As cinco tabelas afetadas foram regeradas nas dez competências.
+
+**Verificado depois.** Zero valores com espaço sobrando; o join entre 202501 e
+202601 pela chave natural volta a casar 1.226.691 linhas; as chaves naturais
+continuam únicas; a taxa de mudança do alvo na transição nova cai de 1,94 para
+0,097, dentro da faixa histórica.
+
+**Descartado.** Normalizar só na comparação de `changes.py`. O Parquet
+continuaria com `'1'` e `'1 '`, e o grafo veria duas categorias diferentes para o
+mesmo tipo de equipamento — o erro sairia da taxa de mudança e entraria no modelo,
+onde é mais difícil de ver.
+
+## D-31 — O diff compara a interseção das colunas, não a lista de um lado
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+**Sintoma.** `detectar_mudancas` devolvia 393 pares tabela-transição onde deviam
+ser 396, com dois erros no log:
+
+```
+[ERRO] tbEstabelecimento em 201801->201901: Binder Error:
+       Referenced column "st_contrato_formalizado" not found in FROM clause!
+```
+
+**Causa.** `diff_tabela` montava a lista de colunas a partir de **um** dos lados
+(o snapshot de origem, quando existe) e usava a mesma lista nos dois `SELECT`. Com
+as colunas instáveis de D-20, o outro lado não tem a coluna e o SQL não liga.
+A transição inteira sumia do resumo — e a falha era silenciosa no que importa:
+a taxa de mudança daquela tabela ficava sem um ano, sem nada acusar.
+
+**Correção.** A comparação usa as colunas presentes nos dois snapshots. Uma
+coluna que não existe num dos lados não mudou nem deixou de mudar; afirmar
+qualquer coisa sobre ela seria invenção.
+
+**Consequência.** 396 de 396 pares, nenhuma tabela com menos de nove transições.
+O efeito é maior do que parece: `tbEstabelecimento` e `tbCargaHorariaSus` são as
+duas maiores tabelas do escopo, e cada uma tinha um ano faltando na série de taxa
+de mudança que D-10 usa.
+
+**Descartado.** Preencher a coluna ausente com `NULL` no lado que não a tem, para
+manter a lista cheia. Isso faria toda linha aparecer como alterada na competência
+em que a coluna volta, o que é ruído puro — a coluna não mudou, ela passou a
+existir.
+

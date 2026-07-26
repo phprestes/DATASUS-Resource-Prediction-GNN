@@ -8,11 +8,19 @@ from src.paths import RAW_FOLDER
 
 BASE_URL = "https://cnes.datasus.gov.br/EstatisticasServlet?path=BASE_DE_DADOS_CNES_"
 
-# Amostra temporal canônica do projeto: janeiro de cada ano, 2017 a 2025.
-# Nove snapshots, oito transições. Ver docs/03-decisoes.md, D-04 — o projeto
+# Amostra temporal canônica do projeto: janeiro de cada ano, 2017 a 2026.
+# Dez snapshots, nove transições. Ver docs/03-decisoes.md, D-04 — o projeto
 # original previa cinco snapshots bienais, que produzem apenas quatro
-# transições e não sustentam afirmação sobre dinâmica temporal.
-PERIODOS_ANUAIS: List[str] = [f"{ano}01" for ano in range(2017, 2026)]
+# transições e não sustentam afirmação sobre dinâmica temporal — e D-29, que
+# acrescentou 202601.
+#
+# O ano final é aberto de propósito: `ANO_FINAL` é o último janeiro publicado
+# pelo CNES, e passar de um ano para o seguinte é editar uma constante. Nada no
+# resto do código conta snapshots à mão; quem precisa da lista real usa
+# `changes.periodos_disponiveis()`, que olha a camada primária.
+ANO_INICIAL = 2017
+ANO_FINAL = 2026
+PERIODOS_ANUAIS: List[str] = [f"{ano}01" for ano in range(ANO_INICIAL, ANO_FINAL + 1)]
 
 def download_cnes_zips(
         periods : List[str],

@@ -235,32 +235,63 @@ def grafo_geografico_para_data(
     return Data(x=features, edge_index=edge_index)
 
 
+# Prefixo das colunas de município das tabelas filhas. `COL_MUNICIPIO` do
+# `graph.py` é `co_municipio_gestor`, que só existe na raiz.
+PREFIXO_MUNICIPIO = "co_municipio"
+
+
+def _e_categoria_de_relacao(coluna: str, dtypes: dict[str, str]) -> bool:
+    """
+    Se a coluna pode ser o vocabulário de categorias de uma tabela de fato.
+
+    Exige `dtype` `category` — sequencial, data e código livre têm cardinalidade
+    da ordem do número de linhas e viram um nó por linha, que é justamente o que
+    D-25 removeu. E exclui município: é localização, e um nó por município liga
+    todos os estabelecimentos da cidade entre si.
+    """
+    return (
+        dtypes.get(coluna) == "category"
+        and coluna != COL_ENTIDADE
+        and not coluna.startswith(PREFIXO_MUNICIPIO)
+    )
+
+
 def escolher_categoria(tabela: str) -> str | None:
     """
     Coluna que define o vocabulário de categorias de uma tabela de fato.
 
-    Prefere a chave natural declarada em `docs/01-selecao-tabelas.md` quando
-    existe, porque ela é exatamente o que identifica a linha além do
-    estabelecimento. Sem ela, cai para a coluna `category` de maior
-    cardinalidade, evitando `co_municipio` — que é localização, não uma
-    categoria da relação, e só serve como último recurso.
+    Prefere a chave natural declarada em `docs/01-selecao-tabelas.md`, porque ela
+    é exatamente o que identifica a linha além do estabelecimento — mas só a
+    parte dela que é categoria de fato. Desde D-27 há 27 chaves naturais
+    declaradas, e várias começam por `co_municipio` ou trazem sequenciais
+    (`co_seq_central`, `sq_acolhimento`): tomar `natural[0]` cegamente escolheria
+    essas. Sem componente aproveitável, cai para a coluna `category` da tabela.
     """
     from src.schema import CNES_DTYPES, CNES_NATURAL_KEY, CNES_USEFUL_COLUMNS
 
     dtypes = CNES_DTYPES.get(tabela, {})
-    natural = [c for c in CNES_NATURAL_KEY.get(tabela, ()) if c != COL_ENTIDADE]
+    natural = [
+        c
+        for c in CNES_NATURAL_KEY.get(tabela, ())
+        if _e_categoria_de_relacao(c, dtypes)
+    ]
     if natural:
         return natural[0]
 
     candidatas = [
+        c for c in CNES_USEFUL_COLUMNS.get(tabela, []) if _e_categoria_de_relacao(c, dtypes)
+    ]
+    if candidatas:
+        return candidatas[0]
+
+    # Último recurso: município. Pior que nada só quando a tabela não tem
+    # nenhuma outra categoria — é o caso das três tabelas `rlMun*`.
+    municipio = [
         c
         for c in CNES_USEFUL_COLUMNS.get(tabela, [])
-        if c != COL_ENTIDADE and dtypes.get(c) == "category"
+        if dtypes.get(c) == "category" and c != COL_ENTIDADE
     ]
-    if not candidatas:
-        return None
-    sem_municipio = [c for c in candidatas if c != "co_municipio"]
-    return (sem_municipio or candidatas)[0]
+    return municipio[0] if municipio else None
 
 
 def _features_de_categoria(n: int, dim: int = 32, semente: int = SEMENTE) -> torch.Tensor:
