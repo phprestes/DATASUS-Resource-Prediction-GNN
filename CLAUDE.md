@@ -14,7 +14,7 @@ Four Markdown files in [docs/](docs/) are the project's contract. They are not s
 
 - **[docs/01-selecao-tabelas.md](docs/01-selecao-tabelas.md)** — the **source of truth for the schema**. [src/schema.py](src/schema.py) parses it at import time and derives `FACT_TABLES`, `CNES_EXTRACT_COLUMNS`, `CNES_USEFUL_COLUMNS`, `CNES_DTYPES`, `CNES_PKEY`, `CNES_NATURAL_KEY`, `CNES_FKEY`. **Editing this file changes the pipeline.** There is no second list in code to keep in sync — that was the bug the refactor removed.
 - **[docs/02-metodologia.md](docs/02-metodologia.md)** — research question, operational definition of scarcity, sample, temporal semantics, the four tracks, evaluation protocol.
-- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 31 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
+- **[docs/03-decisoes.md](docs/03-decisoes.md)** — 32 numbered decisions with the evidence behind each and what was rejected. When something in the code looks surprising, the reason is usually a D-nn entry.
 - **[docs/DICIONARIO_DE_DADOS.pdf](docs/DICIONARIO_DE_DADOS.pdf)** — the DATASUS data dictionary (2025 edition), 155 pages. It describes the **Oracle** database, not the distributed CSV: the extraction exports a subset of the columns and renames some. Where the two disagree, the CSV wins. Read it with `pdftotext -layout`, never page by page.
 
 `docs/SelecaoTabelas_v1.pdf` and `_v2.pdf` are historical records, superseded by `01-selecao-tabelas.md`. `docs/CNES_GNN-2.pdf` is the original project proposal; the code has deliberately diverged from it (see D-01).
@@ -98,9 +98,10 @@ Measured on São Paulo. Figures below marked *(9 snapshots)* were taken before 2
 - **Scope is the state of São Paulo**, prefix `35` — 146.5k establishments in 202601 (136k in 202501), 645 municípios. It was the capital only; D-21 widened it because that nearly triples acquisition events and gives IBGE population non-zero variance. `recorte` is an IBGE-code *prefix*: `'355030'` gets the capital back, `None` the country.
 - **Target.** `rlEstabEquipamento` yields **40,880** acquisition events across the nine transitions at state scope — 34,571 over the eight transitions before 202601 (D-29). `rlEstabServClass` yields 42,208 and stays the runner-up; `rlEstabComplementar` (beds) yields 3,062. That is why the target moved (D-01, D-18) and why it stayed.
 - **Prevalence is 0.0472%** at state scope — 86.7M candidates for 40.9k events. Two candidate-space restrictions were tested and rejected (D-19). Don't propose a third without measuring first. **MAP@k is the headline metric**, and D-24 shows why in practice: AP and MAP@10 rank the baselines differently.
-- **The bar to beat is MAP@10 = 0.296** (`popularidade_item`), not the persistence floor. Persistence returns AP exactly equal to prevalence and AUC exactly 0.500 — if it ever doesn't, the harness is broken (D-24).
-- **Results are in** (D-26, paired on 117k positionable establishments): `gnn_relacional` AP 0.00478 / MAP@10 0.213; `gnn_geografica` 0.00378 / 0.208; `gbdt_geral` 0.00280 / 0.252; `popularidade_item` 0.00215 / **0.296**; `persistencia` 0.00051 / 0.035. **The GNNs win AP and AUC and lose MAP@10** — they learned the establishment dimension, not the item dimension. The next experiment is a combined score (GNN + item-popularity log-odds); don't propose architecture changes before running it.
-- **The paired table is the one that counts.** Prevalence is 0.0507% on positionable establishments vs 0.0428% overall — the subset is 18% richer in positives, so unpaired comparison flatters track 3.
+- **The bar to beat is MAP@10 = 0.300** (`gnn_relacional`, D-32); `popularidade_item` sits at 0.271. Persistence returns AP exactly equal to prevalence and AUC exactly 0.500 — if it ever doesn't, the harness is broken (D-24).
+- **Latest results** (D-32, test 2026, paired on 127.9k positionable establishments): `gnn_relacional` AP 0.01061 / AUC 0.849 / MAP@10 **0.300**; `gnn_geografica` 0.00490 / 0.816 / 0.274; `gbdt_geral` 0.00355 / 0.766 / 0.257; `popularidade_item` 0.00220 / 0.700 / 0.271; `persistencia` 0.00055 / 0.500 / 0.032. The relational GNN now **wins both** metrics, reversing D-26. But three things changed at once — partition moved a year, D-28 fixed the graph's foreign keys, training reached epoch 99 instead of 47 — and **no ablation was run**, so don't state a cause. Decomposing that is the next experiment, ahead of any architecture change.
+- **The paired table is the one that counts.** Prevalence is 0.0553% on positionable establishments vs 0.0478% overall, and **all 6,309 test positives are positionable** — unpaired comparison flatters track 3 by construction.
+- **Two limitations are now quantified, not just mentioned** (D-32): node features come from the graph cutoff (201701), so **45% of nodes enter with an empty feature vector** — the state had 80,073 establishments in 2017 against 146,679 across the series; and the minimal projection (D-23) drops **298 of the 368 `util` columns** of the fact tables, so relational edges carry no weight and no attribute.
 - **Change rate is flat**: 0.079–0.110 per year on the target, median 0.092 over the nine transitions, no pandemic spike. Annual density is settled (D-10). If a table ever shows a rate near 1.0, suspect a key or a padding change before believing the data (D-27, D-30).
 - **Coordinates cover 87.3%** at state scope in 202601 (85.7% in 202501, 75.0% in the capital), 87.2% accumulated over the ten snapshots. Rising ~1.6 points a year. D-17 said 57% — measured on six of nine snapshots, superseded by D-22.
 - **The schema drifts.** Three of 44 tables have columns that vanish and return, with 201901 the anomalous competência. Reading several Parquet files directly via DuckDB needs `union_by_name=true` (D-20).
@@ -112,7 +113,12 @@ The machine has 9 GB and building the state-scope task table once crashed the us
 ## Reproducing the experiment
 
 `python -m tools.roda_experimento` runs all three tracks and writes
-`docs/resultados/{date}-trilhas-{recorte}.json` incrementally. ~45 min, 5.1 GB peak.
+`docs/resultados/{date}-trilhas-{recorte}.json` incrementally. ~55 min at state
+scope, **6.3 GB peak** with the ten-snapshot series. On this 9 GB machine that
+only fits if the browser and IDE are not holding 7 GB: run it under a cgroup
+(`systemd-run --user --scope -p MemoryMax=7G -q .venv/bin/python -m tools.roda_experimento`)
+so an overrun kills the experiment instead of the user's session — a 5.5 GB cap
+with swap disabled died right at the start of GNN training.
 `--pular-gnn` stops after the baselines. The graph cutoff must be
 `particao.antes_de_todos_os_rotulos`, never `fim_do_treino` — the latter puts the
 label inside the graph (D-25), and `grafo_relacional_para_data` refuses the call

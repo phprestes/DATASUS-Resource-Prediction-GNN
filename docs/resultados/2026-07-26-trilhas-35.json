@@ -1,0 +1,176 @@
+{
+  "experimento": "aquisicao de equipamento — tres trilhas",
+  "data": "2026-07-26",
+  "recorte": "35",
+  "snapshots": [
+    "201701",
+    "201801",
+    "201901",
+    "202001",
+    "202101",
+    "202201",
+    "202301",
+    "202401",
+    "202501",
+    "202601"
+  ],
+  "particao": {
+    "treino": [
+      "201801",
+      "201901",
+      "202001",
+      "202101",
+      "202201",
+      "202301"
+    ],
+    "validacao": [
+      "202401",
+      "202501"
+    ],
+    "teste": [
+      "202601"
+    ],
+    "fim_do_treino": "202301",
+    "corte_do_grafo": "201701"
+  },
+  "tarefa": {
+    "linhas": 40838979,
+    "positivos": 40880,
+    "memoria_gb": 0.349
+  },
+  "teste_completo": {
+    "persistencia": {
+      "n": 13208275,
+      "positivos": 6309,
+      "prevalencia": 0.00047765510636324575,
+      "average_precision": 0.00047765510636324575,
+      "auc_roc": 0.5,
+      "map@10": 0.03682366321648699
+    },
+    "popularidade_item": {
+      "n": 13208275,
+      "positivos": 6309,
+      "prevalencia": 0.00047765510636324575,
+      "average_precision": 0.0018964419702685365,
+      "auc_roc": 0.7002268214518159,
+      "map@10": 0.2714094021390902
+    },
+    "gbdt_geral": {
+      "n": 13208275,
+      "positivos": 6309,
+      "prevalencia": 0.00047765510636324575,
+      "average_precision": 0.003194913543628052,
+      "auc_roc": 0.7669081383738374,
+      "map@10": 0.25674189293407934
+    },
+    "gnn_relacional": {
+      "n": 13208275,
+      "positivos": 6309,
+      "prevalencia": 0.00047765509225428104,
+      "average_precision": 0.009904094258042931,
+      "auc_roc": 0.8568565664517158,
+      "map@10": 0.3000223756935098
+    },
+    "gnn_geografica": {
+      "n": 11411933,
+      "positivos": 6309,
+      "prevalencia": 0.0005528423353098333,
+      "average_precision": 0.004904945050821838,
+      "auc_roc": 0.8164693433981517,
+      "map@10": 0.2745453960445555
+    }
+  },
+  "teste_pareado": {
+    "persistencia": {
+      "n": 11411933,
+      "positivos": 6309,
+      "prevalencia": 0.0005528423624639226,
+      "average_precision": 0.0005528423624639226,
+      "auc_roc": 0.5,
+      "map@10": 0.03235845364645378
+    },
+    "popularidade_item": {
+      "n": 11411933,
+      "positivos": 6309,
+      "prevalencia": 0.0005528423624639226,
+      "average_precision": 0.0021951971386488965,
+      "auc_roc": 0.6998898389590169,
+      "map@10": 0.2714094021390902
+    },
+    "gbdt_geral": {
+      "n": 11411933,
+      "positivos": 6309,
+      "prevalencia": 0.0005528423624639226,
+      "average_precision": 0.0035540869528283762,
+      "auc_roc": 0.7664450985578785,
+      "map@10": 0.25670957961164687
+    },
+    "gnn_relacional": {
+      "n": 11411933,
+      "positivos": 6309,
+      "prevalencia": 0.0005528423353098333,
+      "average_precision": 0.010612269621197181,
+      "auc_roc": 0.8487993184723722,
+      "map@10": 0.3000223756935098
+    },
+    "gnn_geografica": {
+      "n": 11411933,
+      "positivos": 6309,
+      "prevalencia": 0.0005528423353098333,
+      "average_precision": 0.004904945050821838,
+      "auc_roc": 0.8164693433981517,
+      "map@10": 0.2745453960445555
+    }
+  },
+  "grafo_relacional": {
+    "tipos_no": 25,
+    "relacoes": 48,
+    "arestas": {
+      "rlCooperativa": 253,
+      "rlEquipeNasfEsf": 692,
+      "rlEstabAtenPsico": 179,
+      "rlEstabAtendPrestConv": 94249,
+      "rlEstabAvaliacao": 311,
+      "rlEstabColetaSelRejeito": 129225,
+      "rlEstabComissaoOutro": 16035,
+      "rlEstabComplementar": 8592,
+      "rlEstabEquipamento": 200764,
+      "rlEstabEquipeProf": 24489,
+      "rlEstabInstFisiAssist": 138752,
+      "rlEstabProgFundo": 99997,
+      "rlEstabSamu": 941,
+      "rlEstabServClass": 78603,
+      "rlEstabServicoApoio": 87387,
+      "rlEstabSipac": 12766,
+      "rlEstabSubTipo": 10610,
+      "rlMunAtenPsico": 145,
+      "tbCargaHorariaSus": 238534,
+      "tbDialise": 225,
+      "tbEquipe": 5248,
+      "tbEstabHorarioAtend": 141564,
+      "tbProfResidencia": 223,
+      "tbServicoReferenciado": 3287
+    }
+  },
+  "treino": {
+    "gnn_relacional": {
+      "segundos": 1668,
+      "melhor_epoca": 99,
+      "ap_validacao": 0.009701407933399773
+    },
+    "gnn_geografica": {
+      "segundos": 160,
+      "melhor_epoca": 26,
+      "ap_validacao": 0.005081615608439443
+    }
+  },
+  "grafo_geografico": {
+    "nos": 127868,
+    "arestas": 1913816,
+    "k": 10,
+    "cobertura_pct": 87.2
+  },
+  "ambiente": {
+    "pico_rss_gb": 6.29
+  }
+}

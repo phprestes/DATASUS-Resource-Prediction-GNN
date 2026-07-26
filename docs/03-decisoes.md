@@ -1243,3 +1243,106 @@ manter a lista cheia. Isso faria toda linha aparecer como alterada na competênc
 em que a coluna volta, o que é ruído puro — a coluna não mudou, ela passou a
 existir.
 
+## D-32 — Resultado sob teste 2026: a GNN relacional passa a vencer as duas métricas
+
+**Data:** 2026-07-26 · **Status:** medido
+
+Reexecução das três trilhas sobre a série de dez snapshots (D-29), recorte
+estadual, transição de teste 2026. Tabela pareada, sobre os 127.868
+estabelecimentos posicionáveis: 11.411.933 exemplos e 6.309 positivos,
+prevalência 0,0553%.
+
+| Modelo | AP | AUC-ROC | MAP@10 | Trilha |
+|---|---|---|---|---|
+| `gnn_relacional` | **0,01061** | **0,849** | **0,3000** | 2 |
+| `gnn_geografica` | 0,00490 | 0,816 | 0,2745 | 3 |
+| `gbdt_geral` | 0,00355 | 0,766 | 0,2567 | 1 |
+| `popularidade_item` | 0,00220 | 0,700 | 0,2714 | 1 |
+| `persistencia` | 0,00055 | 0,500 | 0,0324 | 1 |
+
+Treino: 1.668 s na trilha 2, melhor época 99, AP de validação 0,0097; 160 s na
+trilha 3, melhor época 26. Grafo relacional com 25 tipos de nó e 48 relações;
+geográfico com 127.868 nós e 1.913.816 arestas. Pico de memória 6,29 GB, dentro de
+um cgroup de 7 GB — a primeira tentativa, com teto de 5,5 GB e swap proibido,
+morreu na entrada do treino.
+
+### A régua continua funcionando
+
+`persistencia` devolve AP exatamente igual à prevalência e AUC exatamente 0,500,
+agora sob outra partição, outra série e outro subconjunto. É a terceira execução
+consecutiva em que isso se confirma (D-24, D-26).
+
+### O que inverteu
+
+D-26 registrava o resultado mais desconfortável do trabalho: as GNNs venciam em AP
+e AUC e **perdiam** MAP@10 para `popularidade_item`, um modelo que ignora o
+estabelecimento. Agora a relacional lidera as duas — 0,300 contra 0,271.
+
+| Modelo | AP em D-26 | AP agora | MAP@10 em D-26 | MAP@10 agora |
+|---|---|---|---|---|
+| `gnn_relacional` | 0,00478 | 0,01061 | 0,2133 | 0,3000 |
+| `gnn_geografica` | 0,00378 | 0,00490 | 0,2077 | 0,2745 |
+| `gbdt_geral` | 0,00280 | 0,00355 | 0,2520 | 0,2567 |
+| `popularidade_item` | 0,00215 | 0,00220 | 0,2957 | 0,2714 |
+| `persistencia` | 0,00051 | 0,00055 | 0,0354 | 0,0324 |
+
+### A atribuição não é limpa, e isso precisa ficar escrito
+
+Três mudanças entraram ao mesmo tempo:
+
+1. **A partição andou** — teste 2026 em vez de 2025, seis transições de treino em
+   vez de cinco (D-29).
+2. **O grafo relacional ficou correto** — D-28 removeu 33 chaves estrangeiras com
+   zero valores casando e devolveu `rlEstabEquipeProf`, 815 mil linhas, para a
+   raiz; era a única tabela de fato sem aresta para `tbEstabelecimento`.
+3. **O treino foi mais longe** — melhor época 99 contra 47, com hiperparâmetros
+   idênticos. A parada antecipada disparou depois porque a validação continuou
+   melhorando.
+
+As três baselines quase não se moveram (a maior variação é `gbdt_geral`, de
+0,00280 para 0,00355) e as duas GNNs se moveram muito. Isso aponta para as
+mudanças estruturais, não para a troca de ano — mas **não é ablation**. A
+decomposição é barata e passa a ser o próximo passo: teste 2026 com as FKs antigas,
+e teste 2025 com o grafo corrigido.
+
+O item 3 enfraquece retroativamente o diagnóstico de D-26. Lá a hipótese era que o
+decoder não convergia no componente de item, com 47 épocas e 500 mil pares por
+época; o treino mais longo é consistente com essa hipótese e sugere que parte da
+derrota em MAP@10 era falta de convergência, não limitação do desenho.
+
+### Relacional supera geográfica com folga, revertendo outra leitura de D-26
+
+AP 0,01061 contra 0,00490, AUC 0,849 contra 0,816. Em D-26 as duas empatavam em
+AUC (0,811 contra 0,810), o que sustentava a leitura de que a proximidade física
+capturava quase todo o sinal estrutural e que o schema inteiro rendia pouco a
+mais. Com o grafo relacional corrigido, essa leitura cai. O custo de treino segue
+desfavorável: dez vezes mais tempo.
+
+### Todos os positivos estão nos posicionáveis
+
+A prevalência sobe de 0,0478% no conjunto completo para 0,0553% no pareado, e o
+motivo é mais forte que em D-26: os **6.309 positivos da transição de teste estão
+todos** em estabelecimentos com coordenada plausível. Quem adquiriu equipamento
+entre 2025 e 2026 está georreferenciado, sem exceção. A comparação não pareada
+seria enganosa por construção.
+
+### O que este resultado não diz
+
+Não diz que o modelo identifica escassez — diz que aquisição de equipamento é
+parcialmente previsível a partir da estrutura da rede, e a ponte entre as duas
+coisas continua sendo a inferência declarada em D-02. Também não diz que a
+estrutura relacional é superior por natureza: diz que, com as arestas certas, ela
+supera a geográfica neste recorte e nesta transição.
+
+### Limitações que a execução deixou medidas
+
+- **45% dos nós entram sem feature.** As features de nó saem da última observação
+  até o corte do grafo (201701, D-25), e o recorte tinha 80.073 estabelecimentos em
+  2017 contra 146.679 na série.
+- **298 das 368 colunas `util` das tabelas de fato ficam fora do grafo.** A
+  projeção mínima de D-23 entrega duas colunas por tabela filha, então a aresta não
+  tem peso nem atributo: a GNN sabe que a unidade tem um tipo de equipamento e não
+  sabe quantos.
+
+Nenhuma das duas é nova, mas nenhuma estava quantificada.
+
