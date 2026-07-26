@@ -58,7 +58,8 @@ formulação: prever quanto existe, ou prever o que muda.
 
 **Decisão.** Tarefa primária é classificação binária de **aquisição**: dado que
 o estabelecimento `u` não tem equipamento do tipo `k` em `t`, ele passa a ter em
-`t+1`? Regressão em `qt_existente` fica como tarefa secundária.
+`t+1`? Regressão em `qt_existente` fica como tarefa secundária — **medida e
+rejeitada depois, em D-37**, por degeneração do alvo.
 
 **Justificativa.** Predição de aresta futura em grafo bipartido é onde uma GNN
 tem vantagem estrutural sobre um modelo tabular, o que faz a comparação entre
@@ -1562,3 +1563,92 @@ do escopo.
 A primeira coisa a verificar é a célula A contra D-32. Divergência ali invalida a
 leitura das outras três, e aponta para o código novo em vez do hardware.
 
+## D-37 — Regressão da variabilidade da quantidade: rejeitada
+
+**Data:** 2026-07-26 · **Status:** rejeitada
+
+**Contexto.** D-02 registrou a regressão da quantidade como tarefa **secundária** e
+nunca mediu se ela sustenta um experimento. A pergunta específica: prever a
+**variabilidade** da quantidade de um equipamento, no total ou na parcela disponível
+ao SUS. Medido na seção 6 do `notebook/00_analise_alvo.ipynb`, recorte estadual, nove
+transições.
+
+### O que foi medido
+
+Só pares presentes nos **dois** snapshots entram: par que aparece é aquisição — a
+tarefa primária — e par que desaparece é remoção. A pergunta aqui é outra: dado que o
+equipamento já está lá, a quantidade se move?
+
+**2.276.691 pares persistentes. 25.475 mudam de quantidade: 1,119%.**
+
+| Transição | Pares | Mudaram | % | sd(Δ) | RMSE de prever zero | MAE de prever zero |
+|---|---|---|---|---|---|---|
+| 201801 | 199.362 | 2.312 | 1,16% | 4,437 | 4,438 | 0,109 |
+| 201901 | 212.520 | 2.065 | 0,97% | 3,384 | 3,384 | 0,078 |
+| 202001 | 225.078 | 2.513 | 1,12% | 3,098 | 3,098 | 0,080 |
+| 202101 | 239.482 | 2.907 | 1,21% | 4,914 | 4,915 | 0,114 |
+| 202201 | 252.999 | 3.441 | 1,36% | 4,910 | 4,911 | 0,125 |
+| 202301 | 266.264 | 2.752 | 1,03% | 4,889 | 4,889 | 0,094 |
+| 202401 | 279.941 | 2.417 | 0,86% | 2,776 | 2,776 | 0,060 |
+| 202501 | 292.953 | 2.937 | 1,00% | 4,450 | 4,450 | 0,092 |
+| 202601 | 308.092 | 4.131 | 1,34% | 3,896 | 3,896 | 0,110 |
+
+Distribuição do delta em 202601: **Δ = 0 em 98,659%** dos pares; +1 em 0,363%; −1 em
+0,232%; +2 em 0,135%; −2 em 0,102%.
+
+### Os três critérios, e por que nenhum passa
+
+O critério de decisão foi fixado **antes** da medição, no veredito 6 do notebook.
+
+1. **Tarefa degenerada?** Sim. O RMSE de prever zero iguala o desvio padrão do alvo
+   até a terceira decimal em todas as nove transições, e o erro absoluto médio de
+   prever zero é de 0,06 a 0,13 equipamento. Não há variância a explicar.
+2. **Salvável como classificação ordinal de três classes?** Não. Exigia delta
+   concentrado em ±1 **com** mais de 10% dos pares se movendo; o movimento é de 1,1%,
+   uma ordem de grandeza abaixo. E entre os que se movem a cauda é grossa: |Δ| mediano
+   2, p90 de 15, p99 de 105,7, máximo de 961.
+3. **Salvável agregando por estabelecimento?** Não. O desvio do delta sobe de 2,8–4,9
+   para 11,2–25,9, quatro a cinco vezes — mas só 2,4% a 4,3% dos estabelecimentos
+   mudam o total, o RMSE de prever zero continua igual ao desvio, e o MAE fica abaixo
+   de **um** equipamento (0,39 a 0,80). Trocar a unidade de análise move a esparsidade
+   de nível; não cria sinal.
+
+### A variante no SUS não é mensurável, e seria pior
+
+`qt_sus` existe em **uma única competência**, 202601 (D-29). Variação exige dois
+instantes. E onde ela existe já é **87,1% zeros**, com 25,3% de nulos e apenas 12,0%
+das linhas coincidindo com `qt_existente`.
+
+Quando 202701 chegar haverá duas observações e portanto **uma** transição —
+insuficiente para a partição de D-08, que precisa de treino, validação e teste
+disjuntos. O proxy por `tp_sus` é mensurável hoje (83.005 linhas marcadas como SUS no
+estado contra 242.010 não-SUS), mas herda a mesma esparsidade de variação do total.
+
+### Achado colateral: a cauda é ruído de cadastro
+
+O delta chega a −1.308 e +1.375 num único par (estabelecimento, tipo de equipamento)
+em um ano. Nenhum estabelecimento adquire mil e trezentos aparelhos de um tipo em doze
+meses: isso é correção de registro, não aquisição física.
+
+Isso **reforça** a rejeição em vez de atenuá-la. A pouca variância que existe está
+concentrada em erro de digitação corrigido depois, e um modelo treinado nesse alvo
+aprenderia a prever correção cadastral. Vale como observação sobre a qualidade do dado,
+generalizável a qualquer trabalho que use quantidades do CNES como alvo contínuo.
+
+### Decisão
+
+A regressão da quantidade **sai do escopo**, pelo mesmo motivo que levou D-03 a
+descartar a taxa de utilização: o alvo é quase constante. O fenômeno de interesse — a
+quantidade se move — é raro, e a formulação correta de evento raro é a que o projeto já
+usa: classificação binária de aquisição.
+
+Isso é resultado, não fracasso: elimina um caminho que consumiria trabalho sem
+sustentar afirmação, e a medição fica registrada para quem quiser revisitar quando a
+série de `qt_sus` existir.
+
+### Descartado de saída
+
+Prever o **nível** da quantidade, em vez da variação. É tecnicamente fácil e
+cientificamente vazio: a persistência já resolve — 98,7% dos pares não se movem — e
+reportar o R² disso confundiria inércia com capacidade preditiva, que é a armadilha de
+D-11 em outra roupa.

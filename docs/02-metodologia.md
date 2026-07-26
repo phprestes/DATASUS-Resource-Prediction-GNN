@@ -266,7 +266,10 @@ como característica do problema, não como defeito a corrigir (D-19).
   prevalência ao lado.
 - **AUC-ROC** como terciária, por comparabilidade com a literatura.
 
-Tarefa secundária, regressão: **RMSE** e **MAE**.
+~~Tarefa secundária, regressão: **RMSE** e **MAE**.~~ A tarefa secundária foi medida
+e **rejeitada** (D-37): apenas 1,119% dos pares persistentes mudam de quantidade entre
+duas competências, e prever zero tem RMSE igual ao desvio padrão do alvo. RMSE e MAE
+seguem implementados em `src/ml/metrics.py`, sem alvo que os justifique hoje.
 
 ### 6.3 Regra de reporte
 

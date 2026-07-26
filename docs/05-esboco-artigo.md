@@ -6,7 +6,7 @@ pendente. O README descreve o repositório; este documento organiza o argumento
 científico.
 
 As fontes primárias são os demais documentos de `docs/`: a metodologia detalhada em
-[`02-metodologia.md`](02-metodologia.md), o racional de cada escolha nas 36 entradas
+[`02-metodologia.md`](02-metodologia.md), o racional de cada escolha nas 37 entradas
 de [`03-decisoes.md`](03-decisoes.md), a especificação do schema em
 [`01-selecao-tabelas.md`](01-selecao-tabelas.md) e o critério de admissão de fontes
 externas em [`04-dados-externos.md`](04-dados-externos.md). O segundo pipeline, que
@@ -137,7 +137,7 @@ resultado a reportar como fato estabelecido. A decisão está registrada em D-02
 2. Medição, sobre dez anos de registro no estado de São Paulo, de que a estrutura
    relacional supera tanto o modelo tabular quanto a vizinhança geográfica.
 3. Catálogo de modos de falha metodológica identificados no percurso, com o efeito de
-   cada um sobre o número reportado (seção 4.7 e as 36 entradas de
+   cada um sobre o número reportado (seção 4.7 e as 37 entradas de
    [`03-decisoes.md`](03-decisoes.md)).
 
 ---
@@ -250,8 +250,10 @@ do tipo `k` no instante `t`, ela passa a possuí-lo em `t+1`?
 
 A formulação como predição de aresta futura é deliberada: é o regime em que uma rede
 neural de grafos apresenta vantagem estrutural sobre um modelo tabular, o que confere
-significado à comparação entre abordagens. A regressão da quantidade existente
-permanece como tarefa secundária.
+significado à comparação entre abordagens. A regressão da quantidade existente foi
+medida e **rejeitada** como tarefa secundária: 1,119% dos pares persistentes mudam de
+quantidade entre competências, e prever zero tem RMSE igual ao desvio padrão do alvo
+(D-37). O evento raro tem formulação binária, que é a adotada.
 
 O regime é de desbalanceamento extremo: 86,7 milhões de pares candidatos para 40.880
 eventos, prevalência de 0,047%. Duas restrições do espaço de candidatos foram

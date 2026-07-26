@@ -214,7 +214,7 @@ make limpar-intermediario                    # apaga a camada 02, que é descart
 - **Testes deliberadamente negativos.** Os 67 testes existem para que a partição
   temporal, o schema e o diff entre snapshots **falhem** em vez de produzir um número
   bonito e errado. Cada modo de falha coberto já ocorreu neste projeto ao menos uma vez.
-- **Decisões auditáveis.** 36 entradas numeradas em
+- **Decisões auditáveis.** 37 entradas numeradas em
   [`docs/03-decisoes.md`](docs/03-decisoes.md), cada uma com a evidência que a motivou
   e o que foi rejeitado. Quando o código parecer surpreendente, a razão está num `D-nn`.
 - **Gerenciamento moderno de pacotes.** Ecossistema `uv` com `pyproject.toml`, e lock
@@ -233,7 +233,7 @@ make limpar-intermediario                    # apaga a camada 02, que é descart
 ├── 📂 docs/                      # O contrato do projeto — o código é downstream daqui
 │   ├── 01-selecao-tabelas.md     # FONTE DA VERDADE do schema; lida por schema.py
 │   ├── 02-metodologia.md         # desenho experimental detalhado
-│   ├── 03-decisoes.md            # 36 decisões numeradas, com evidência e o rejeitado
+│   ├── 03-decisoes.md            # 37 decisões numeradas, com evidência e o rejeitado
 │   ├── 04-dados-externos.md      # teste de admissão para fontes do SUS e do IBGE
 │   ├── 05-esboco-artigo.md       # estrutura do artigo, figuras e pendências
 │   ├── 06-pipeline-hpc.md        # pipeline do servidor e a matriz técnica × escopo
