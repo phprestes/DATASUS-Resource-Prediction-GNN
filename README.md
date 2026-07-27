@@ -40,9 +40,10 @@ Cinco notebooks sequenciais conduzem a investigação:
 1. **[00_analise_alvo.ipynb](notebook/00_analise_alvo.ipynb)** — o **gate empírico**.
    Ponto de decisão bloqueante: qual tabela é o melhor alvo, se as chaves de linha são
    únicas, se a densidade anual basta, se a trilha geográfica é viável e quais colunas
-   o filtro empírico rejeita. Cinco vereditos escritos, todos fechados.
+   o filtro empírico rejeita, e se a regressão da quantidade se sustenta. Seis
+   vereditos escritos, todos fechados.
 2. **[01_perfil_dados.ipynb](notebook/01_perfil_dados.ipynb)** — perfil da camada
-   primária: nulos, cardinalidade e distribuição das 393 colunas aprovadas.
+   primária: nulos, cardinalidade e distribuição das 394 colunas aprovadas.
 3. **[02_relacoes.ipynb](notebook/02_relacoes.ipynb)** — o grafo do schema CNES,
    derivado do parser e não de uma lista escrita à mão.
 4. **[03_modelagem.ipynb](notebook/03_modelagem.ipynb)** — as três trilhas sobre a
@@ -233,7 +234,7 @@ make limpar-intermediario                    # apaga a camada 02, que é descart
 ├── 📂 docs/                      # O contrato do projeto — o código é downstream daqui
 │   ├── 01-selecao-tabelas.md     # FONTE DA VERDADE do schema; lida por schema.py
 │   ├── 02-metodologia.md         # desenho experimental detalhado
-│   ├── 03-decisoes.md            # 37 decisões numeradas, com evidência e o rejeitado
+│   ├── 03-decisoes.md            # 38 decisões numeradas, com evidência e o rejeitado
 │   ├── 04-dados-externos.md      # teste de admissão para fontes do SUS e do IBGE
 │   ├── 05-esboco-artigo.md       # estrutura do artigo, figuras e pendências
 │   ├── 06-pipeline-hpc.md        # pipeline do servidor e a matriz técnica × escopo

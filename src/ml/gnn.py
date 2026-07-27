@@ -262,8 +262,8 @@ def escolher_categoria(tabela: str) -> str | None:
 
     Prefere a chave natural declarada em `docs/01-selecao-tabelas.md`, porque ela
     é exatamente o que identifica a linha além do estabelecimento — mas só a
-    parte dela que é categoria de fato. Desde D-27 há 27 chaves naturais
-    declaradas, e várias começam por `co_municipio` ou trazem sequenciais
+    parte dela que é categoria de fato. Desde D-38 as 44 tabelas de fato têm chave
+    natural declarada, e várias começam por `co_municipio` ou trazem sequenciais
     (`co_seq_central`, `sq_acolhimento`): tomar `natural[0]` cegamente escolheria
     essas. Sem componente aproveitável, cai para a coluna `category` da tabela.
     """

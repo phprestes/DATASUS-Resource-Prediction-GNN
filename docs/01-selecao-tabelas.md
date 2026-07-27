@@ -92,13 +92,22 @@ de inserção ao comparar dois snapshots. É opcional: quando não declarada, o
 diff opera por presença da tupla inteira e não classifica modificações — o que
 infla a taxa de mudança, porque cada alteração conta como dois eventos.
 
-São **42 das 44 tabelas**, e nenhuma foi declarada por dedução: cada tupla tem
-zero duplicatas em todos os snapshots da camada primária (D-27). Vieram de três
+São **as 44 tabelas**, sem exceção, e nenhuma foi declarada por dedução: cada
+tupla foi medida nos dez snapshots da camada primária (D-27, D-38). Vieram de três
 lugares — a PRIMARY KEY composta do dicionário (25 tabelas), a chave primária de
 uma coluna quando ela é de fato única (9), e busca da menor combinação única (8),
 usada quando o dicionário citava coluna com outro nome no CSV, como
 `dt_avaliacao` virando `to_chardt_avaliacaoddmmyyyy`, ou quando a chave do
 dicionário simplesmente não bastava.
+
+**A chave natural contém a PRIMARY KEY do dicionário.** Toda tabela tem chave
+primária no dicionário, e ela não é descartável: identificar a linha é o que a
+chave existe para fazer, e a coluna que compõe a PK entra na chave mesmo quando
+não tem valor descritivo nenhum — `co_end_compl`, de `rlEstabServClass`, é
+exatamente esse caso e está registrado abaixo. Colunas *além* da PK entram só
+quando a PK medida não basta. As 44 declarações obedecem à regra: a auditoria da
+PK composta do dicionário contra a chave declarada não encontra nenhuma coluna de
+PK fora da chave (D-38).
 
 `rlMunUnidAcolhim` é o exemplo do último caso e vale registrar: o dicionário dá
 `co_unidade` + `sq_acolhimento`, e essa tupla duplica em **todos** os snapshots —
@@ -107,21 +116,44 @@ tabela liga *cada município atendido* a uma unidade de acolhimento, então o
 município é parte da identidade da linha. A chave do dicionário estava errada,
 não incompleta por nome.
 
-As duas que ficaram sem: `rlEstabServClass` e `rlEstabSipac`, onde nenhuma
-combinação de até quatro colunas materializadas identifica a linha.
+As duas que ficaram sem chave até D-38 foram `rlEstabServClass` e `rlEstabSipac`,
+e as duas foram resolvidas medindo, não deduzindo:
 
-Duas regras que valem para declarar mais:
+- **`rlEstabServClass`** — a PK do dicionário
+  (`co_unidade`, `co_servico`, `co_classificacao`, `tp_caracteristica`,
+  `co_cnpjcpf`) duplica, e a duplicação **cresce**: 561 linhas em 201701, 4.991 em
+  202601. Falta `co_end_compl`, o código do endereço complementar, que o filtro
+  semântico havia descartado por não descrever recurso: o mesmo serviço, com a
+  mesma classificação e o mesmo prestador, aparece uma vez por endereço
+  complementar do estabelecimento. Com ela a tupla tem **zero duplicatas nos dez
+  snapshots**. A coluna volta a `util` porque é componente de identidade de linha,
+  não porque virou informativa.
+- **`rlEstabSipac`** — a PK do dicionário (`co_unidade`,
+  `cod_sub_grupo_habilitacao`) é declarada igual nas oito views que compartilham o
+  CSV, e nos dados ela é **tão única quanto a linha inteira**: as 8 a 59
+  duplicatas por snapshot são linhas **idênticas em todas as colunas exportadas**,
+  inclusive `no_portaria` e `co_usuario`. Nenhuma coluna as separa porque não há o
+  que separar — é repetição na origem, medida em estabelecimentos do Distrito
+  Federal. A chave é declarada, e a unicidade vale *a menos de linha repetida*;
+  o efeito no diff é somar algumas linhas à contagem de inalteradas.
 
-- **Mínima.** `tp_sus` e `co_tipo_leito` estavam nas chaves de
+Três regras que valem para declarar ou editar uma chave:
+
+- **Contém a PK do dicionário.** Coluna de PRIMARY KEY não sai da chave, nem
+  quando o filtro semântico a descartaria por não descrever recurso. Descartar
+  para o Parquet e descartar da identidade da linha são decisões separadas.
+- **Mínima acima da PK.** `tp_sus` e `co_tipo_leito` estavam nas chaves de
   `rlEstabEquipamento` e `rlEstabComplementar` e são redundantes — os
-  subconjuntos sem eles já são únicos. Chave inflada é pior que chave curta:
+  subconjuntos sem eles já são únicos, e nenhuma das duas é coluna de PK do
+  dicionário (`co_unidade`+`co_equipamento`+`co_tipo_equipamento` e
+  `co_unidade`+`co_leito`). Chave inflada acima da PK é pior que chave curta:
   uma linha que só troca `tp_sus` passa a contar como remoção mais inserção,
   que é exatamente o que a chave natural existe para evitar.
 - **Verificada, não deduzida.** `rlEstabServClass` é a única tabela cuja PK
-  composta do dicionário **não** identifica a linha nos dados (561 duplicatas
-  em 201701, 1.159 em 201901). Por isso continua sem chave natural, apesar de o
-  dicionário oferecer uma — e isso importa, porque ela é o alvo alternativo de
-  primeira escolha (D-18).
+  composta do dicionário **não** identifica a linha nos dados (561 duplicatas em
+  201701, 4.991 em 202601) — e a resposta foi *estender* a chave com
+  `co_end_compl`, não abandoná-la (D-38). Importa, porque ela é o alvo
+  alternativo de primeira escolha (D-18).
 
 ### Chave estrangeira
 
@@ -147,18 +179,17 @@ Duas consequências:
 - Tabelas no dicionário: 57
 - Tabelas `incluida`: 44
 - Tabelas `fora`: 13
-- Colunas `util`: 393
-- Colunas `descartada` pelo filtro semântico: 521 — 352 nas seções abaixo mais
+- Colunas `util`: 394
+- Colunas `descartada` pelo filtro semântico: 520 — 351 nas seções abaixo mais
   as 169 das 13 tabelas `fora`, que não têm seção própria
 - Colunas `descartada` pelo filtro empírico: 3
 - Colunas `pendente`: 0
-- Chaves naturais declaradas: 42 de 44 — faltam `rlEstabServClass` e
-  `rlEstabSipac`
+- Chaves naturais declaradas: 44 de 44 (D-38)
 
 **Admitir coluna nova exige regerar a camada primária.** `co_tipo_abrangencia`,
-`st_coworking` e `sq_acolhimento` entraram depois que os Parquet de
+`st_coworking`, `sq_acolhimento` e `co_end_compl` entraram depois que os Parquet de
 `data/03_primary` existiam, e o Parquet só contém o que estava declarado no
-momento da conversão. As três já foram regeradas. Para as próximas, `to_sql` e
+momento da conversão. As quatro já foram regeradas. Para as próximas, `to_sql` e
 `to_parquet` aceitam `tabelas=[...]`: reprocessar só as tabelas afetadas custa
 minutos, contra horas da competência inteira. O DuckDB intermediário produzido
 assim é **parcial** — apague-o depois, ou `to_parquet` sem argumento exportaria
@@ -722,6 +753,7 @@ externa (`04-dados-externos.md`).
 - **Dicionário:** `RL_ESTAB_SERV_CLASS` — Serviço Especializado/Classificação
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `co_servico`, `co_classificacao`, `tp_caracteristica`, `co_cnpjcpf`, `co_end_compl`
 - **Linhas medidas:** 201701: 765.030, 202501: 1.308.190
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |
@@ -735,7 +767,7 @@ externa (`04-dados-externos.md`).
 | `co_ambulatorial_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Serviço Atende Ambulatorial SUS (1-Sim, 2-Não) |
 | `co_hospitalar` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Serviço Atende Hospitalar Não SUS (1-Sim, 2-Não) |
 | `co_hospitalar_sus` | CHAR(1) | category | util | - | - | 0/0 | Indica se o Serviço Atende Hospitalar SUS (1-Sim, 2-Não) |
-| `co_end_compl` | VARCHAR2(5) | string | descartada | - | - | 0/0 | filtro semântico: Código do Endereço Complementar |
+| `co_end_compl` | VARCHAR2(5) | string | util | - | - | 0/0 | Código do Endereço Complementar. Componente de identidade da linha: sem ela a PK do dicionário duplica, 561 linhas em 201701 e 4.991 em 202601 (D-38). Não descreve recurso — entra pela chave natural, não pelo valor descritivo |
 | `st_ativo_sn` | CHAR(1) | string | descartada | - | - | 100/100 | filtro semântico: Sem Uso |
 | `to_chardt_atualizacaoddmmyyyy` | DATE | datetime64[ns] | util | - | - | 0/0 | Data da Última Atualização do Registro |
 | `co_usuario` | VARCHAR2(12) | string | descartada | - | - | 0/0 | filtro semântico: Último Usuário que atualizou o Registro |
@@ -767,6 +799,7 @@ externa (`04-dados-externos.md`).
 - **Dicionário:** `RL_ESTAB_SIPAC` — Habilitações, Incentivos e Regras Contratuais
 - **Escopo:** incluida
 - **Chave primária:** `co_unidade`
+- **Chave natural:** `co_unidade`, `cod_sub_grupo_habilitacao`
 - **Linhas medidas:** 201701: 85.876, 202501: 110.584
 
 | coluna | tipo_origem | dtype | classificacao | pkey | fkey_para | nulos | justificativa |

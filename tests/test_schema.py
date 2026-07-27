@@ -85,6 +85,36 @@ def test_toda_tabela_incluida_tem_coluna_materializavel():
     assert not vazias, f"tabelas incluídas sem coluna aproveitável: {vazias}"
 
 
+def test_toda_tabela_de_fato_tem_chave_natural():
+    """
+    D-38: identificar a linha é imprescindível, e toda tabela do dicionário tem
+    PRIMARY KEY.
+
+    Sem chave natural, `src/etl/changes.py` cai no modo por tupla inteira, em que
+    modificação conta como remoção mais inserção e a taxa de mudança sai inflada.
+    Duas tabelas ficaram nesse modo entre D-27 e D-38 porque a identidade delas
+    dependia de coluna que o filtro semântico havia descartado — descartar do
+    Parquet e descartar da identidade da linha são decisões separadas.
+    """
+    sem_chave = [t for t in schema.FACT_TABLES if not schema.CNES_NATURAL_KEY.get(t)]
+    assert not sem_chave, f"tabelas de fato sem chave natural declarada: {sem_chave}"
+
+
+def test_chave_natural_e_subconjunto_das_colunas_materializadas():
+    """
+    A chave só serve se as colunas dela chegarem ao Parquet.
+
+    `_validar` já recusa chave que cite coluna inexistente na tabela; este teste
+    fecha o caso adjacente, o de coluna que existe no dicionário mas foi
+    descartada e portanto não é materializada — foi o que impediu de declarar a
+    chave de `rlEstabServClass` até `co_end_compl` voltar a `util` (D-38).
+    """
+    for tabela in schema.FACT_TABLES:
+        materializadas = set(schema.CNES_EXTRACT_COLUMNS[tabela])
+        fora = [c for c in schema.CNES_NATURAL_KEY[tabela] if c not in materializadas]
+        assert not fora, f"{tabela}: chave natural fora do Parquet: {fora}"
+
+
 def test_chaves_estrangeiras_apontam_para_tabelas_incluidas():
     """
     Reproduz D-14: rlEstabEqpUnidApoio apontava para rlEstabEndCompl, que não

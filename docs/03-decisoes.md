@@ -1012,7 +1012,7 @@ inofensiva: com `tp_sus` dentro dela, uma linha que apenas troca a
 disponibilidade SUS de 1 para 2 conta como remoção mais inserção, que é o
 comportamento que a chave natural existe para evitar. As duas foram encurtadas.
 
-### As duas que ficaram de fora
+### As duas que ficaram de fora — **superado por D-38**
 
 - `rlEstabServClass` — a PK composta do dicionário **não** identifica a linha:
   561 duplicatas em 201701, 822 em 201801, 1.159 em 201901. Nenhuma combinação de
@@ -1021,6 +1021,12 @@ comportamento que a chave natural existe para evitar. As duas foram encurtadas.
   identidade de linha dela.
 - `rlEstabSipac` — mesma situação com seis colunas candidatas. É a tabela que o
   dicionário descreve em sete views diferentes.
+
+Parar aqui foi erro de escopo da busca, não dos dados: as duas foram resolvidas em
+D-38, uma estendendo a chave com `co_end_compl` (coluna que o filtro semântico
+havia descartado), a outra constatando que a PK do dicionário é tão única quanto a
+linha inteira. **São 44 de 44**, e a regra passa a ser explícita — coluna de PK do
+dicionário não sai da chave natural.
 
 ### Consequências medidas
 
@@ -1652,3 +1658,118 @@ Prever o **nível** da quantidade, em vez da variação. É tecnicamente fácil 
 cientificamente vazio: a persistência já resolve — 98,7% dos pares não se movem — e
 reportar o R² disso confundiria inércia com capacidade preditiva, que é a armadilha de
 D-11 em outra roupa.
+
+## D-38 — Toda tabela tem chave natural: a PK do dicionário não é descartável
+
+**Data:** 2026-07-26 · **Status:** aplicado
+
+D-27 deixou duas das 44 tabelas sem chave natural — `rlEstabServClass` e
+`rlEstabSipac` — porque a PRIMARY KEY que o dicionário declara para elas duplica
+nos dados. A conclusão de lá foi parar; a conclusão certa era continuar. Toda
+tabela do dicionário tem chave primária, e identificar a linha é imprescindível:
+uma coluna que compõe a PK não sai da chave só porque o filtro semântico a
+julgou sem valor descritivo. **Descartar do Parquet e descartar da identidade da
+linha são decisões separadas**, e D-27 as tratou como uma.
+
+### Auditoria das 44
+
+Antes de mexer nas duas, a PK composta do dicionário foi extraída do PDF (coluna
+`PRIMARY KEY = Yes`, por seção `LFCESnnn`) e comparada com a chave declarada de
+cada tabela de fato. Cinco divergências apareceram, três delas de nome e não de
+substância:
+
+| Tabela | Coluna de PK fora da chave | Veredito |
+|---|---|---|
+| `rlAdmGerenciaCnes` | `dt_vigencia_inicial` | falso positivo — no CSV é `to_chardt_vigencia_inicialddmmyyyy`, já na chave |
+| `rlEstabAvaliacao` | `dt_avaliacao` | falso positivo — `to_chardt_avaliacaoddmmyyyy`, já na chave |
+| `rlEquipeNasfEsf` | `cd_aldeia` | falso positivo — coluna não existe no CSV exportado, e a PK da própria seção da tabela tem as seis colunas já declaradas |
+| `rlEstabServClass` | as cinco da PK | real |
+| `rlEstabSipac` | as duas da PK | real |
+
+As 42 declarações de D-27 obedecem à regra sem exceção: nenhuma coluna de PK do
+dicionário está fora da chave natural. A regra passa a valer explicitamente, com
+a minimalidade de D-27 rebaixada a **mínima acima da PK** — `tp_sus` e
+`co_tipo_leito` continuam fora porque nunca foram colunas de PK.
+
+### `rlEstabServClass`: faltava `co_end_compl`
+
+A PK do dicionário — `co_unidade`, `co_servico`, `co_classificacao`,
+`tp_caracteristica`, `co_cnpjcpf` — duplica, e a duplicação cresce com a série:
+
+```
+201701   561      202101  2.241     202501  4.466
+201801   822      202201  2.966     202601  4.991
+201901 1.159      202301  3.387
+202001 1.431      202401  3.961
+```
+
+O que separa as linhas é `co_end_compl`, o código do endereço complementar, que
+D-05 havia descartado pelo filtro semântico: o mesmo serviço, com a mesma
+classificação e o mesmo prestador, aparece uma vez por endereço complementar do
+estabelecimento. Com ela na tupla, **zero duplicatas nos dez snapshots**, e zero
+nulos. A coluna volta a `util` por ser componente de identidade de linha — não
+porque tenha passado a descrever recurso. A camada primária da tabela foi
+regerada nas dez competências (`make reprocessar-tabelas`).
+
+Isso importa porque `rlEstabServClass` é o alvo alternativo de primeira escolha
+(D-18): a barreira que D-27 apontava para trocar de alvo — resolver a identidade
+de linha — deixa de existir.
+
+### `rlEstabSipac`: a PK basta, e o resto é repetição na origem
+
+Aqui a medição diz outra coisa. As oito views que o dicionário descreve sobre
+esse CSV declaram a **mesma** PK (`co_unidade`, `cod_sub_grupo_habilitacao`), e
+nos dados ela é *tão única quanto a linha inteira*:
+
+```
+snapshot   linhas   dup. da PK   dup. da linha inteira
+201701     85.876            0                       0
+201801     88.818           59                      59
+202401    108.713            8                       8
+202601    115.121           11                      11
+```
+
+Estender a chave não muda nada — `tp_habilitacao`, `cmtp_inicio`, `cmtp_fim`,
+`no_portaria`, `nu_leitos` e a data de atualização dão exatamente a mesma
+contagem, porque as linhas duplicadas são **idênticas em todas as colunas
+exportadas**, inclusive `co_usuario`. São repetições na origem, concentradas em
+estabelecimentos do Distrito Federal. A chave é declarada, e a unicidade vale *a
+menos de linha repetida* — a alternativa seria deduplicar na conversão, o que
+inventaria regra por tabela dentro de `to_parquet` para corrigir 0,07% das
+linhas de uma tabela que não é alvo.
+
+### Consequências medidas
+
+- **Taxa de mudança das duas**, com a chave declarada contra o modo sem chave
+  (`detectar_mudancas(reprocess=True)`, 18 pares tabela-transição):
+
+  | Tabela | Mediana sem chave | Mediana com chave | `alterada` classificadas |
+  |---|---|---|---|
+  | `rlEstabServClass` | 0,1385 | **0,1300** | 91.714 em 9 transições |
+  | `rlEstabSipac` | 0,1011 | **0,0783** | 15.561 em 9 transições |
+
+  A conclusão de D-10 não muda: as duas seguem na faixa plana, sem pico de
+  pandemia. `rlEstabServClass` tem taxa mais alta que o alvo (0,130 contra 0,092)
+  porque é tabela de serviço declarado, que se recadastra mais que equipamento
+  físico — observação, não defeito.
+- **O grafo relacional não muda.** `escolher_categoria` prefere a chave natural,
+  e para as duas tabelas a primeira componente que é `category` de fato é a mesma
+  coluna que a busca por `util` já escolhia: `co_servico` e
+  `cod_sub_grupo_habilitacao`. Os números de D-32 seguem comparáveis, e nenhuma
+  execução precisa ser repetida por causa desta decisão.
+- **Colunas `util` passam de 393 para 394**, e as chaves naturais de 42 para
+  **44 de 44**.
+
+### Rejeitado
+
+- **Deixar as duas sem chave**, como D-27 fez. O custo é silencioso e recorrente:
+  toda modificação vira remoção mais inserção, a taxa sai inflada, e a tabela que
+  é alvo alternativo fica sem identidade de linha.
+- **Chave mínima abaixo da PK.** Para `rlEstabServClass`, a tupla sem
+  `tp_caracteristica` também é única nos dez snapshots, e por minimalidade pura
+  seria a escolhida. Fica de fora: `tp_caracteristica` é coluna de PK do
+  dicionário, e trocar Próprio por Terceirizado é troca de identidade do vínculo,
+  não atualização de atributo. Minimalidade se aplica acima da PK, não contra ela.
+- **Deduplicar `rlEstabSipac` no `to_parquet`.** Regra por tabela na conversão,
+  para apagar 8 a 59 linhas idênticas por snapshot numa tabela que não é alvo. O
+  fato fica documentado em vez de corrigido.
