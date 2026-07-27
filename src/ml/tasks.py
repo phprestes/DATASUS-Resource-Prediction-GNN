@@ -66,6 +66,13 @@ class TabelaTarefa:
     col_rotulo: str
 
     def __post_init__(self) -> None:
+        """
+        Recusa uma tarefa sem as colunas que todas as trilhas assumem existir.
+
+        Raises:
+            ErroTarefa: falta `col_entidade`, `col_rotulo`, a coluna de conjunto
+                ou `periodo_destino`.
+        """
         faltando = [
             c
             for c in (self.col_entidade, self.col_rotulo, COL_CONJUNTO, "periodo_destino")
@@ -82,10 +89,21 @@ class TabelaTarefa:
         Não é coluna materializada de propósito: `datetime64[ns]` custa 8 bytes
         por linha, e com dezenas de milhões de linhas isso são centenas de
         megabytes para armazenar o que `periodo_destino` já determina.
+
+        Returns:
+            Série `datetime64[ns]` com a data do snapshot de destino de cada
+            exemplo, na ordem das linhas.
         """
         return self.df["periodo_destino"].astype(str).map(data_do_periodo)
 
     def memoria_gb(self) -> float:
+        """
+        Tamanho da tabela em memória, contando o conteúdo das colunas de objeto.
+
+        Returns:
+            Gigabytes ocupados. Serve para checar o efeito da compactação de
+            D-23, que cortou a tabela do estado de 3,22 GB para 0,32 GB.
+        """
         return float(self.df.memory_usage(deep=True).sum()) / 1024**3
 
     def codigos(self, coluna: str) -> "np.ndarray":
@@ -96,6 +114,13 @@ class TabelaTarefa:
         codificar. Chamar `.astype(str)` numa coluna com dezenas de milhões de
         linhas reconstrói o dicionário inteiro em objetos Python e foi o que
         estourou a memória antes.
+
+        Args:
+            coluna: nome da coluna, categórica ou não.
+
+        Returns:
+            Vetor de códigos inteiros. Coluna não categórica é convertida na
+            hora, o que não preserva o mapeamento entre chamadas.
         """
         serie = self.df[coluna]
         if isinstance(serie.dtype, pd.CategoricalDtype):
@@ -104,13 +129,40 @@ class TabelaTarefa:
 
     @property
     def prevalencia(self) -> float:
-        """Fração de positivos. Base de comparação obrigatória num problema desbalanceado."""
+        """
+        Fração de positivos na tabela inteira.
+
+        Base de comparação obrigatória: com prevalência de 0,05%, um AP de 0,006
+        é doze vezes a linha de base e ainda parece zero.
+
+        Returns:
+            Fração entre 0 e 1, sobre todos os conjuntos juntos. Para a
+            prevalência de um conjunto só, use `resumo`.
+        """
         return float(self.df[self.col_rotulo].mean())
 
     def por_conjunto(self, conjunto: str) -> pd.DataFrame:
+        """
+        Fatia da tabela pertencente a um conjunto.
+
+        Args:
+            conjunto: `"treino"`, `"validacao"` ou `"teste"`.
+
+        Returns:
+            Visão do DataFrame, não uma cópia. Não escreva nela.
+        """
         return self.df[self.df[COL_CONJUNTO] == conjunto]
 
     def resumo(self) -> pd.DataFrame:
+        """
+        Exemplos, positivos e prevalência por conjunto e período de destino.
+
+        Returns:
+            DataFrame com uma linha por par `(conjunto, periodo_destino)`. A
+            prevalência por linha revela o efeito da subamostragem: no treino ela
+            fica em 0,5% por causa dos negativos 200:1, e em validação e teste
+            fica no valor real, perto de 0,05%.
+        """
         agrupado = self.df.groupby([COL_CONJUNTO, "periodo_destino"], as_index=False).agg(
             exemplos=(self.col_rotulo, "size"),
             positivos=(self.col_rotulo, "sum"),
@@ -120,6 +172,21 @@ class TabelaTarefa:
 
 
 def _parquet(periodo: str, tabela: str, pasta: Path) -> Path:
+    """
+    Caminho de um Parquet da camada primária, checando que existe.
+
+    Args:
+        periodo: competência `YYYYMM`.
+        tabela: nome da tabela na grafia do CSV.
+        pasta: raiz da camada primária.
+
+    Returns:
+        Caminho do arquivo.
+
+    Raises:
+        ErroTarefa: o arquivo não existe, o que significa ETL faltando para
+            aquela competência.
+    """
     caminho = pasta / periodo / f"{tabela}.parquet"
     if not caminho.exists():
         raise ErroTarefa(
@@ -142,6 +209,18 @@ def _universo_de_itens(
     equipamento que só aparece em 2025 ainda assim era um candidato possível em
     2018, e omiti-lo tiraria do conjunto de teste justamente as aquisições mais
     informativas.
+
+    Args:
+        con: conexão DuckDB já configurada, com o teto de memória posto.
+        periodos: competências a varrer, tipicamente a série inteira.
+        tabela: tabela de fato de onde sai o item.
+        col_item: coluna do item, por exemplo `co_equipamento`.
+        pasta: raiz da camada primária.
+
+    Returns:
+        Valores distintos e não nulos, em ordem crescente. A ordem é fixada pelo
+        `ORDER BY` da consulta e vira a ordem do índice do decoder, então mudá-la
+        invalida pesos já treinados.
     """
     caminhos = [str(_parquet(p, tabela, pasta)) for p in periodos]
     lista = ", ".join(f"'{c}'" for c in caminhos)
@@ -167,6 +246,17 @@ def _universo_de_entidades(
     união da série, e não do snapshot corrente: um estabelecimento que só
     aparece em 2023 tem de ter código no índice para que a fatia de 2023 possa
     usá-lo sem criar categorias próprias.
+
+    Args:
+        con: conexão DuckDB já configurada.
+        periodos: competências a varrer.
+        recorte: prefixo de código IBGE; `None` é o país inteiro.
+        pasta: raiz da camada primária.
+
+    Returns:
+        `co_unidade` distintos do recorte, em ordem crescente. A leitura usa
+        `union_by_name=true` porque três das 44 tabelas têm colunas que
+        aparecem e desaparecem ao longo da série (D-20).
     """
     caminhos = [str(_parquet(p, TABELA_RAIZ, pasta)) for p in periodos]
     lista = ", ".join(f"'{c}'" for c in caminhos)
@@ -221,6 +311,31 @@ def tarefa_aquisicao(
     Como todas as trilhas recebem a mesma `TabelaTarefa`, elas veem exatamente a
     mesma amostra de treino e o mesmo teste completo — a comparação continua
     pareada. Use `None` para desligar e treinar sobre o espaço inteiro.
+
+    Args:
+        particao: partição temporal. Todas as trilhas precisam receber a mesma.
+        tabela: tabela de fato do alvo. `rlEstabEquipamento` rende 40.880 eventos
+            no estado e é por isso que é o default (D-18).
+        col_item: coluna do item dentro da tabela de fato.
+        recorte: prefixo de código IBGE. `'35'` é o estado, `'355030'` a capital,
+            `None` o país. O filtro é empurrado para dentro da leitura Parquet.
+        pasta: raiz da camada primária. No cluster aponta para `$IC_HPC_DATA`.
+        negativos_por_positivo: negativos mantidos por positivo **no treino**.
+            `None` desliga a subamostragem.
+        semente: semente da amostra de negativos.
+        limite_duckdb: teto de memória do DuckDB. Explícito porque sem ele o
+            buffer é dimensionado pela RAM total e disputa memória com o pandas
+            no mesmo processo.
+
+    Returns:
+        `TabelaTarefa` com um exemplo por par candidato, colunas de entidade,
+        item, rótulo, conjunto e as duas competências. Entidade e item vêm como
+        `category` com índice compartilhado entre as fatias — sem isso o `concat`
+        cairia para `object` e o pico de memória seria o da tabela em strings.
+
+    Raises:
+        ErroTarefa: nenhum valor de item na tabela, Parquet ausente para alguma
+            competência, ou transição sem candidato algum.
     """
     import numpy as np
 
@@ -289,6 +404,15 @@ def _compactar(df: pd.DataFrame, categoricas: list[str]) -> pd.DataFrame:
 
     A conversão é feita coluna a coluna, com o original descartado logo em
     seguida, para que o pico de memória não seja o dobro do resultado.
+
+    Args:
+        df: tabela a compactar. Modificada no lugar.
+        categoricas: colunas a converter, além de `periodo_origem`,
+            `periodo_destino` e a coluna de conjunto, que sempre entram.
+
+    Returns:
+        O mesmo objeto recebido, com as colunas convertidas. Devolvido por
+        conveniência de encadeamento, não por ser uma cópia.
     """
     for coluna in [*categoricas, "periodo_origem", "periodo_destino", COL_CONJUNTO]:
         if coluna in df.columns and not isinstance(
@@ -308,6 +432,18 @@ def _subamostrar_negativos(
     estabelecimento nem por item. Estratificar pareceria mais cuidadoso, mas
     distorceria a distribuição conjunta que o modelo precisa aprender: um
     equipamento raro deve continuar raro na amostra de treino.
+
+    Aplica-se **somente ao treino**. Validação e teste ficam completos, senão a
+    prevalência medida seria artificial e o AP incomparável (D-23).
+
+    Args:
+        fatia: exemplos de uma transição, com a coluna de rótulo.
+        por_positivo: quantos negativos manter por positivo.
+        rng: gerador do numpy, de semente fixa, para a amostra ser reprodutível.
+
+    Returns:
+        Nova tabela com todos os positivos e a amostra de negativos. Se já houver
+        negativos suficientes ou nenhum positivo, devolve a fatia intacta.
     """
     positivos = fatia[fatia[COL_ROTULO] == 1]
     negativos = fatia[fatia[COL_ROTULO] == 0]
@@ -330,6 +466,30 @@ def _aquisicao_de_transicao(
     recorte: str | None,
     pasta: Path,
 ) -> pd.DataFrame:
+    """
+    Rótulos de uma transição: o par ausente em `t` passa a existir em `t+1`?
+
+    O espaço de candidatos é o produto entre os estabelecimentos ativos em `t` e
+    o universo de itens da série, menos os pares que já existiam — daí o
+    `CROSS JOIN` seguido de `EXCEPT`. É o passo que gera dezenas de milhões de
+    linhas por transição, e é onde o recorte espacial paga.
+
+    Args:
+        con: conexão DuckDB com a tabela temporária `universo_itens` já criada.
+        transicao: par de competências `t` e `t+1`.
+        tabela: tabela de fato do alvo, por exemplo `rlEstabEquipamento`.
+        col_item: coluna do item.
+        recorte: prefixo de código IBGE; `None` é o país inteiro.
+        pasta: raiz da camada primária.
+
+    Returns:
+        Tabela com entidade, item, rótulo binário e as duas competências. **Em
+        ordem canônica** por entidade e item — ver a nota junto da consulta.
+
+    Raises:
+        ErroTarefa: a transição não gerou candidato algum, o que costuma ser
+            recorte errado ou ETL faltando.
+    """
     raiz = _parquet(transicao.origem, TABELA_RAIZ, pasta)
     fato_origem = _parquet(transicao.origem, tabela, pasta)
     fato_destino = _parquet(transicao.destino, tabela, pasta)
@@ -363,7 +523,15 @@ def _aquisicao_de_transicao(
         LEFT JOIN passou_a_ter p
                ON c."{COL_ENTIDADE}" = p."{COL_ENTIDADE}"
               AND c."{col_item}" = p."{col_item}"
+        ORDER BY c."{COL_ENTIDADE}", c."{col_item}"
     """
+    # O `ORDER BY` acima não é cosmético. Sem ele o hash join paralelo do DuckDB
+    # devolve as linhas em ordem arbitrária, que muda de processo para processo.
+    # O treino sorteia o minilote por índice com semente fixa, então a mesma
+    # semente sobre ordens diferentes seleciona linhas diferentes e o treino
+    # deixa de ser reprodutível — medido em D-42: melhor época 10 contra 99,
+    # MAP@10 0,189 contra 0,300. O LightGBM das baselines sofre do mesmo.
+    #
     # Arrow com dicionário em vez de `.df()` direto. `.df()` materializa cada
     # `co_unidade` como um objeto Python — na transição de teste do estado são
     # 11,7 milhões de strings, mais de um gigabyte só nisso. O dicionário
@@ -410,6 +578,22 @@ def tarefa_quantidade(
     verificar se o ganho estrutural observado na tarefa primária sobrevive a uma
     formulação de regressão, e para comparabilidade com a literatura, que trata
     capacidade assistencial como regressão.
+
+    **Rejeitada por medição** (D-37): apenas 1,119% dos pares persistentes mudam
+    de quantidade entre duas competências, e prever zero dá RMSE igual ao desvio
+    padrão do alvo. Fica implementada e sem uso.
+
+    Args:
+        particao: partição temporal, a mesma da tarefa primária.
+        tabela: tabela de fato do alvo.
+        col_item: coluna do item.
+        col_quantidade: coluna numérica a prever, por exemplo `qt_existente`.
+        recorte: prefixo de código IBGE; `None` é o país inteiro.
+        pasta: raiz da camada primária.
+
+    Returns:
+        `TabelaTarefa` de tipo `regressao`, com um exemplo por par existente em
+        `t` e o valor observado em `t+1` como alvo.
     """
     fatias: list[pd.DataFrame] = []
     with duckdb.connect() as con:
