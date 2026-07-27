@@ -66,14 +66,31 @@ class ExecucaoSalva:
 
     @property
     def nome(self) -> str:
+        """
+        Returns:
+            Nome do diretório do pacote, que carrega data, trilha, escopo, modo,
+            variante e semente (ver `nome_de_execucao`).
+        """
         return self.caminho.name
 
     @property
     def metricas(self) -> dict:
+        """
+        Returns:
+            Métricas gravadas no manifesto, ou mapa vazio. São as **declaradas**;
+            para recomputar do escore salvo, use `recomputar_metricas`.
+        """
         return self.manifesto.get("metricas", {})
 
     def indice(self) -> dict[str, list[str]]:
-        """Ordem de `unidades` e `itens`, como o treino a viu."""
+        """
+        Ordem de `unidades` e `itens`, como o treino a viu.
+
+        Returns:
+            Mapa `{"unidades": [...], "itens": [...]}`. Não é opcional: o
+            embedding de item é indexado por posição, então pesos sem esta ordem
+            carregam sem erro e pontuam lixo (D-35).
+        """
         df = pd.read_parquet(self.caminho / ARQ_INDICE)
         return {
             eixo: df.loc[df["eixo"] == eixo, "valor"].tolist()
@@ -81,6 +98,21 @@ class ExecucaoSalva:
         }
 
     def previsoes(self, compactas: bool = False) -> pd.DataFrame:
+        """
+        Escore por exemplo, como gravado no treino.
+
+        Args:
+            compactas: usa a versão reduzida, quando existe.
+
+        Returns:
+            DataFrame com rótulo, escore e entidade por exemplo. É o que permite
+            recomputar métrica e gerar curva de precisão–revocação sem GPU e sem
+            a camada de dados.
+
+        Raises:
+            ErroArtefato: o pacote não tem previsão salva, e portanto não pode
+                ser reavaliado fora da máquina que o treinou.
+        """
         arquivo = ARQ_PREVISOES_COMPACTAS if compactas else ARQ_PREVISOES
         caminho = self.caminho / PASTA_PREVISOES / arquivo
         if not caminho.exists():
@@ -91,6 +123,14 @@ class ExecucaoSalva:
         return pd.read_parquet(caminho)
 
     def historico(self) -> pd.DataFrame:
+        """
+        Curva de treino, uma linha por época.
+
+        Returns:
+            DataFrame com época, perda e AP de validação. Vazio nas trilhas sem
+            treino. O número de épocas até a parada é resultado reportável, não
+            detalhe de implementação (D-42).
+        """
         caminho = self.caminho / ARQ_HISTORICO
         if not caminho.exists():
             return pd.DataFrame()
@@ -102,6 +142,15 @@ class ExecucaoSalva:
 
         O default é CPU porque o caso de uso é justamente inspecionar num
         notebook, longe da GPU que treinou.
+
+        Args:
+            dispositivo: destino do mapeamento, `"cpu"` ou `"cuda"`.
+
+        Returns:
+            `state_dict` do modelo.
+
+        Raises:
+            ErroArtefato: o pacote não tem pesos, o que é o caso das baselines.
         """
         import torch
 
@@ -159,17 +208,40 @@ def versoes() -> dict[str, str]:
 
 
 def nome_de_execucao(
-    trilha: str, escopo: str | None, modo: str = "compativel", quando: date | None = None
+    trilha: str,
+    escopo: str | None,
+    modo: str = "compativel",
+    quando: date | None = None,
+    variante: str | None = None,
+    semente: int | None = None,
 ) -> str:
     """
-    Nome do diretório: data, trilha, escopo e modo.
+    Nome do diretório de um pacote: data, trilha, escopo, modo, variante e semente.
 
-    O modo entra no nome porque a matriz de D-34 tem quatro células e duas delas
-    diferem **apenas** nele — sem isso, dois pacotes de execuções diferentes
-    disputariam o mesmo caminho.
+    Todo eixo da bateria entra no nome, e por um motivo só: duas execuções que
+    diferem em qualquer um deles são resultados distintos, e sem o eixo no
+    caminho a segunda sobrescreve a primeira em silêncio. Já aconteceu com a
+    variante de pandemia, que só existia dentro do JSON.
+
+    Args:
+        trilha: nome do modelo, por exemplo `gnn_relacional`.
+        escopo: recorte espacial; `None` vira `pais`.
+        modo: `compativel` ou `completo` (D-34).
+        quando: data do pacote. `None` usa hoje.
+        variante: `com-pandemia` ou `sem-pandemia`. `None` omite do nome, o que
+            mantém compatibilidade com os pacotes já gravados.
+        semente: semente da execução. `None` omite do nome.
+
+    Returns:
+        Nome de diretório, sem separador de caminho.
     """
     quando = quando or date.today()
-    return f"{quando}-{trilha}-{escopo or 'pais'}-{modo}"
+    partes = [str(quando), trilha, escopo or "pais", modo]
+    if variante:
+        partes.append(variante)
+    if semente is not None:
+        partes.append(f"s{semente}")
+    return "-".join(partes)
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +258,19 @@ def _previsoes_para_df(
     `entidade` fica como código inteiro, e a tradução mora em `indice.parquet`.
     Materializar `co_unidade` como string aqui multiplicaria o arquivo por
     quarenta, que é a razão de `Previsao` guardar códigos (D-23).
+
+    Args:
+        previsao: `Previsao` com rótulos, escores e entidades.
+        itens: item de cada exemplo, na **mesma ordem** da previsão. `None` omite
+            a coluna, o que impede recomputar MAP@k depois.
+
+    Returns:
+        DataFrame com `entidade` (int32), `y` (int8), `escore` (float32) e, quando
+        dado, `item` (int16).
+
+    Raises:
+        ErroArtefato: `itens` tem comprimento diferente da previsão, o que
+            significa que vieram de fatias diferentes e o par sairia embaralhado.
     """
     dados = {
         "entidade": np.asarray(previsao.entidades, dtype=np.int32),
@@ -219,6 +304,16 @@ def _compactar_previsoes(
     O `top` default é 20 porque o vocabulário do alvo tem 99 itens: pegar 50 por
     estabelecimento guardaria metade do arquivo completo e não compactaria nada.
     Com 20, o compacto fica em cerca de um quinto, e ainda cobre MAP@10 com folga.
+
+    Args:
+        df: previsões completas, como `_previsoes_para_df` devolve.
+        top_por_entidade: quantos melhores escores manter por entidade.
+        negativos: teto da amostra do resto.
+        semente: semente da amostra.
+
+    Returns:
+        DataFrame com a coluna `origem` marcando `"topo"` ou `"amostra"`, para que
+        ninguém confunda o recorte com o arquivo completo.
     """
     rng = np.random.default_rng(semente)
     ordenado = df.sort_values("escore", ascending=False)
@@ -239,6 +334,8 @@ def salvar_execucao(
     *,
     escopo: str | None = None,
     modo: str = "compativel",
+    variante: str | None = None,
+    semente: int | None = None,
     modelo=None,
     unidades: "list[str] | None" = None,
     itens_indice: "list[str] | None" = None,
@@ -261,10 +358,39 @@ def salvar_execucao(
     `modelo` é opcional: baseline não tem pesos, e ainda assim vale salvar
     previsão e métrica, porque é o que permite refazer a curva com o piso ao lado
     (D-11).
+
+    Args:
+        trilha: nome do modelo, por exemplo `gnn_relacional`.
+        previsao: `Previsao` com rótulos, escores e entidades.
+        metricas: métricas por visão, ou um bloco único.
+        escopo: recorte espacial da execução.
+        modo: `compativel` ou `completo` (D-34).
+        variante: `com-pandemia` ou `sem-pandemia`.
+        semente: semente da execução.
+        modelo: modelo treinado. `None` para baseline.
+        unidades: ordem de `co_unidade` que o modelo viu. Obrigatória quando
+            `modelo` é dado.
+        itens_indice: ordem do vocabulário de itens. Idem.
+        itens_por_exemplo: item de cada exemplo, para o MAP@k ser recomputável.
+        historico: curva de treino.
+        particao: partição temporal, gravada no manifesto.
+        hiperparametros: gravados no manifesto como procedência.
+        extra: campos livres do manifesto.
+        pasta_base: raiz de `models/`.
+        nome: nome do diretório. `None` deriva de `nome_de_execucao`.
+        salvar_previsoes: grava o escore por exemplo.
+
+    Returns:
+        Diretório escrito.
+
+    Raises:
+        ErroArtefato: `modelo` foi passado sem `unidades` e `itens_indice`. A
+            recusa é deliberada: pesos sem a ordem carregam sem erro e pontuam
+            lixo (D-35).
     """
     import torch
 
-    nome = nome or nome_de_execucao(trilha, escopo, modo)
+    nome = nome or nome_de_execucao(trilha, escopo, modo, variante=variante, semente=semente)
     destino = Path(pasta_base) / nome
     (destino / PASTA_PREVISOES).mkdir(parents=True, exist_ok=True)
 
@@ -339,6 +465,19 @@ def salvar_execucao(
 
 
 def carregar_execucao(caminho: "str | Path") -> ExecucaoSalva:
+    """
+    Lê o manifesto de um pacote, sem tocar nos dados pesados.
+
+    Args:
+        caminho: diretório do pacote.
+
+    Returns:
+        `ExecucaoSalva` com o manifesto carregado. Previsões, pesos, índice e
+        histórico ficam sob demanda.
+
+    Raises:
+        ErroArtefato: não há manifesto no caminho, logo não é um pacote.
+    """
     caminho = Path(caminho)
     arquivo = caminho / ARQ_MANIFESTO
     if not arquivo.exists():
@@ -351,7 +490,16 @@ def carregar_execucao(caminho: "str | Path") -> ExecucaoSalva:
 
 
 def listar_execucoes(pasta_base: Path = MODELS_DIR) -> list[ExecucaoSalva]:
-    """Todos os pacotes de `models/`, do mais recente para o mais antigo."""
+    """
+    Todos os pacotes de `models/`.
+
+    Args:
+        pasta_base: raiz a varrer.
+
+    Returns:
+        Pacotes do mais recente para o mais antigo. Lista vazia se a pasta não
+        existe, para que o chamador não precise checar antes.
+    """
     if not Path(pasta_base).exists():
         return []
     achados = [
@@ -378,6 +526,14 @@ def recomputar_metricas(
     É o que dá sentido a "validar em qualquer dispositivo": as métricas do
     manifesto passam a ser verificáveis por quem recebe o pacote, em vez de
     aceitas por confiança.
+
+    Args:
+        execucao: pacote, ou caminho para um.
+        k: tamanho do topo do MAP@k.
+
+    Returns:
+        Mapa com a visão `teste_completo`. A visão pareada exige o conjunto de
+        posicionáveis, que não vai no pacote.
     """
     from src.ml.metrics import avaliar_classificacao
 
@@ -398,6 +554,15 @@ def conferir(
 
     Lista vazia é o resultado esperado. Qualquer item é sinal de pacote
     inconsistente — previsão de uma execução com métrica de outra, por exemplo.
+
+    Args:
+        execucao: pacote, ou caminho para um.
+        tolerancia: diferença absoluta aceita por métrica.
+        k: tamanho do topo do MAP@k.
+
+    Returns:
+        Uma string por divergência, vazia quando tudo confere. É o que
+        `make validar` imprime.
     """
     if not isinstance(execucao, ExecucaoSalva):
         execucao = carregar_execucao(execucao)

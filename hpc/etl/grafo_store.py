@@ -24,13 +24,26 @@ from hpc.ml.grafo_temporal import (
     salvar,
     verificar_sem_vazamento,
 )
-from src.etl.changes import periodos_disponiveis, transicoes
+from src.etl.changes import periodos_disponiveis
 from src.ml.graph import COL_ENTIDADE, TABELA_RAIZ, colunas_minimas_para_grafo, montar_db
 from src.ml.splits import particionar
 
 
 def nome_do_conjunto(recorte: str | None, modo: str) -> str:
-    """Escopo e modo no nome: os grafos do modo compatível não são os do completo."""
+    """
+    Nome do conjunto de grafos, que carrega escopo e modo.
+
+    Os dois eixos entram no nome porque os grafos do modo compatível não são os do
+    completo: um é estático com projeção mínima, o outro é um por transição com
+    peso de aresta. Reusar entre modos seria comparar coisas diferentes.
+
+    Args:
+        recorte: prefixo de código IBGE; `None` vira `pais`.
+        modo: `compativel` ou `completo`.
+
+    Returns:
+        Nome de diretório, sem separador de caminho.
+    """
     return f"{recorte or 'pais'}-{modo}"
 
 
@@ -41,13 +54,36 @@ def materializar(
     destino: Path | None = None,
     verboso: bool = True,
     permitir_maquina_pequena: bool = False,
+    excluir_pandemia: bool = False,
 ) -> Path:
+    """
+    Monta e grava os grafos por transição de um escopo e modo.
+
+    Args:
+        recorte: prefixo de código IBGE; `None` é o país inteiro.
+        modo: `"completo"` monta um grafo por transição, com atributo e peso de
+            aresta; `"compativel"` replica a limitação de 9 GB — um único grafo
+            estático, projeção mínima, sem peso (D-34).
+        pasta_primaria: camada primária de origem. `None` usa a raiz do servidor.
+        destino: pasta de gravação. `None` deriva de `nome_do_conjunto`.
+        verboso: imprime progresso de cada etapa.
+        permitir_maquina_pequena: ignora a guarda de RAM. Só para dado sintético.
+        excluir_pandemia: usa a partição de controle, sem as transições que tocam
+            202001 ou 202101. Muda o corte do grafo no modo compatível, então os
+            grafos das duas variantes **não** são intercambiáveis.
+
+    Returns:
+        Caminho do arquivo `grafos.pt` gravado.
+    """
     pasta_primaria = pasta_primaria or primary_folder()
     destino = destino or grafos_folder(criar=True) / nome_do_conjunto(recorte, modo)
 
     periodos = periodos_disponiveis(pasta_primaria)
-    particao = particionar(periodos)
-    todas = transicoes(periodos)
+    particao = particionar(periodos, excluir_pandemia=excluir_pandemia)
+    # As transições da partição, não todas as da série: com `excluir_pandemia` as
+    # de 2020 e 2021 saem, e montar grafo para elas seria trabalho jogado fora.
+    todas = [t for grupo in particao.conjuntos.values() for t in grupo]
+    todas.sort(key=lambda t: t.destino)
 
     completo = modo == "completo"
     colunas = colunas_para_grafo_completo() if completo else colunas_minimas_para_grafo()
@@ -97,6 +133,12 @@ def materializar(
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando da materialização de grafos.
+
+    Returns:
+        0 em sucesso. Código de saída do processo.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--recorte", default="", help="prefixo IBGE; vazio = país")
     ap.add_argument("--modo", choices=["compativel", "completo"], default="completo")
@@ -106,6 +148,8 @@ def main() -> int:
                     help="aceito por simetria com o experimento; a montagem não usa GPU")
     ap.add_argument("--permitir-maquina-pequena", action="store_true",
                     help="ignora a guarda de RAM; só para dado sintético")
+    ap.add_argument("--excluir-pandemia", action="store_true",
+                    help="partição de controle; muda o corte e portanto os grafos")
     args = ap.parse_args()
 
     materializar(
@@ -114,6 +158,7 @@ def main() -> int:
         pasta_primaria=args.pasta_primaria,
         destino=args.destino,
         permitir_maquina_pequena=args.permitir_maquina_pequena,
+        excluir_pandemia=args.excluir_pandemia,
     )
     return 0
 

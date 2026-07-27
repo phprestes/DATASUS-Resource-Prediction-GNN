@@ -57,9 +57,27 @@ def tarefa_aquisicao(
     """
     Monta a tarefa na raiz do servidor.
 
-    `recorte=None` é o default e significa o país inteiro — é o ponto de rodar
-    aqui. `modo="compativel"` restaura os 200 negativos por positivo do pipeline
-    do notebook, para a célula da matriz que mantém a técnica constante.
+    Args:
+        particao: partição temporal, a mesma dos dois pipelines.
+        recorte: prefixo de código IBGE. `None` é o país inteiro, que é o ponto
+            de rodar aqui.
+        modo: `"completo"` usa todos os negativos; `"compativel"` restaura os
+            200 por positivo do notebook, para a célula que mantém a técnica
+            constante (D-34).
+        tabela: tabela de fato do alvo.
+        col_item: coluna do item.
+        pasta: camada primária. `None` usa a raiz do servidor.
+        semente: semente da subamostragem, quando houver.
+        permitir_maquina_pequena: ignora a guarda de RAM. Só para dado sintético.
+
+    Returns:
+        `TabelaTarefa` no mesmo formato do pipeline local — a definição do rótulo
+        é a de `src.ml.tasks` e não muda, senão as metades da matriz ficam
+        incomparáveis.
+
+    Raises:
+        ValueError: `modo` fora de `compativel` e `completo`.
+        RuntimeError: máquina com menos de 64 GB de RAM.
     """
     if modo not in ("compativel", "completo"):
         raise ValueError(f"modo deve ser 'compativel' ou 'completo'; recebido {modo!r}")

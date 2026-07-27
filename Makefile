@@ -1,85 +1,122 @@
-# Makefile do projeto — atalhos documentados para o que se roda com frequência.
+# Makefile do projeto. `make` sem argumento lista tudo.
 #
-# DOIS PIPELINES, ISOLADOS (D-34):
+# ============================================================================
+# LEIA ISTO SE É A PRIMEIRA VEZ
+# ============================================================================
 #
-#   src/  roda nesta máquina, sob as limitações de 9 GB de RAM. São os alvos
-#         `etl`, `experimento`, `testes` — o caminho normal de trabalho.
-#   hpc/  roda no servidor do IME, com CUDA e recorte nacional. São os alvos
-#         prefixados `hpc-`, que delegam para hpc/Makefile.
+# O projeto tem DOIS pipelines, que rodam em máquinas diferentes e são isolados
+# de propósito (D-34):
 #
-# Os alvos `hpc-*` NÃO devem ser executados nesta máquina: o pipeline do servidor
-# é dimensionado para 440 GB, e o código recusa rodar abaixo de 64 GB de RAM.
+#   src/   máquina pessoal. 9 GB de RAM, sem GPU, recorte estadual.
+#          Alvos SEM prefixo: `setup`, `etl`, `experimento`, `testes`.
 #
-# Toda receita usa o Python do .venv diretamente, sem depender de `activate`:
-# `make` abre um shell por linha, então um `source .venv/bin/activate` não
-# sobreviveria até a linha seguinte.
+#   hpc/   cluster do IME (`brucutuvii`: 440 GB, 2x RTX A6000). Escopo nacional,
+#          CUDA obrigatório. Alvos com prefixo `hpc-`.
 #
-# Convenções:
-#   - `make` sem argumento lista os alvos (help).
-#   - Variáveis com `?=` podem ser sobrescritas na linha de comando:
+# Os alvos `hpc-*` RECUSAM rodar abaixo de 64 GB de RAM. A guarda é deliberada:
+# uma tentativa de exercitar o caminho completo numa máquina de 9 GB esgotou a
+# memória do sistema e do editor.
+#
+# Caminho mínimo numa máquina nova:
+#
+#     make setup                 # cria o .venv e instala tudo
+#     make testes                # confirma que o ambiente está de pé
+#     make etl                   # baixa e converte os dados (horas, ~3,6 GB)
+#     make experimento           # as três trilhas (~55 min, pico 6,3 GB)
+#     make resultados            # imprime a tabela do que acabou de rodar
+#
+# Caminho mínimo no cluster: veja `make hpc-ajuda` e hpc/README.md.
+#
+# ----------------------------------------------------------------------------
+# Convenções
+#
+#   - Variáveis com `?=` são sobrescritas na linha de comando:
 #         make experimento RECORTE=355030 MEM=4G
+#   - Toda receita chama o Python do .venv diretamente. `make` abre um shell por
+#     linha, então um `source .venv/bin/activate` não sobreviveria à linha
+#     seguinte.
 #   - Alvos que gastam horas ou gigabytes avisam antes do que vão fazer.
+# ============================================================================
 
 PY       := .venv/bin/python
 PIP      := VIRTUAL_ENV=.venv uv pip
 
-# Recorte espacial: prefixo de código IBGE. '35' = estado de São Paulo,
-# '355030' = município da capital, vazio = país inteiro (exige memória de sobra).
+# --- Recorte espacial -------------------------------------------------------
+# Prefixo de código IBGE, que é hierárquico. Não há caso especial: município é
+# apenas o prefixo completo.
+#     355030  município de São Paulo     35  estado       (vazio)  país inteiro
 RECORTE  ?= 35
 
-# Teto de memória do experimento.
+# --- Teto de memória --------------------------------------------------------
+# O experimento local roda dentro de um cgroup. Se estourar, morre o
+# experimento e não a sessão do usuário.
 MEM      ?= 7G
 
-# Competências a processar no ETL. Vazio = série canônica de src/etl/extract.py.
-PERIODOS ?=
+# --- ETL --------------------------------------------------------------------
+PERIODOS ?=              # competências a processar; vazio = série canônica
+TABELAS  ?=              # tabelas de `reprocessar-tabelas`; sem default
+PERIODO  ?=              # competência de `reprocessar-tabelas`
 
-# Tabelas a reprocessar em `reprocessar-tabelas`. Sem default de propósito.
-TABELAS  ?=
-PERIODO  ?=
+# --- Modelagem --------------------------------------------------------------
+EPOCAS   ?= 150
+SEMENTE  ?= 42
+RUN      ?=              # pacote a validar; vazio = o mais recente de models/
 
-# Pacote de modelo a validar. Vazio = o mais recente de models/.
-RUN      ?=
-
-# Modo do pipeline do servidor: `compativel` replica as limitações desta máquina,
-# `completo` levanta as quatro. As células da matriz de D-34 saem daqui.
+# `compativel` replica as quatro limitações da máquina de 9 GB em qualquer
+# escopo; `completo` as levanta. É condição experimental, não compat de código.
 MODO     ?= completo
 
-EPOCAS   ?= 150
+# Variante de pandemia. Vazio = série completa; qualquer valor = controle sem
+# as transições que tocam 202001 ou 202101.
+SEM_PANDEMIA ?=
+FLAG_PANDEMIA := $(if $(SEM_PANDEMIA),--excluir-pandemia,)
 
 # Envolve o comando num cgroup com teto de memória, se systemd-run existir.
-LIMITADOR := $(shell command -v systemd-run >/dev/null 2>&1 && echo "systemd-run --user --scope -p MemoryMax=$(MEM) -q")
+LIMITADOR := $(shell command -v systemd-run >/dev/null 2>&1 && echo "systemd-run --user --scope -p MemoryMax=$(MEM) -p MemorySwapMax=$(MEM) -q")
 
 .DEFAULT_GOAL := help
 .PHONY: help setup etl etl-periodo mudancas reprocessar-tabelas testes teste-schema \
-        verificar experimento experimento-baselines experimento-capital resultados \
-        modelos validar notebooks limpar-intermediario limpar-cache \
-        hpc-ambiente hpc-etl hpc-grafos hpc-experimento hpc-matriz hpc-ajuda
+        verificar experimento experimento-baselines experimento-capital \
+        experimento-sem-pandemia resultados modelos validar notebooks \
+        limpar-intermediario limpar-cache \
+        hpc-ambiente hpc-etl hpc-grafos hpc-experimento hpc-matriz hpc-tudo \
+        hpc-plano hpc-ajuda
 
-# ---------------------------------------------------------------- ambiente
+# ============================================================ ajuda
 
 help:  ## Lista os alvos disponíveis
-	@echo "Pipeline local (src/) — esta máquina, 9 GB, sem GPU:"
+	@echo ""
+	@echo "\033[1mPRIMEIROS PASSOS\033[0m  (máquina pessoal)"
+	@echo "  make setup   ->  make testes  ->  make etl  ->  make experimento"
+	@echo ""
+	@echo "\033[1mPIPELINE LOCAL (src/)\033[0m — 9 GB, sem GPU:"
 	@grep -hE '^[a-z0-9][a-zA-Z0-9_-]*:.*?## ' $(firstword $(MAKEFILE_LIST)) \
 		| grep -v '^hpc-' \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-24s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-26s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Pipeline do servidor (hpc/) — NÃO rodar aqui; delega para hpc/Makefile:"
+	@echo "\033[36mPIPELINE DO SERVIDOR (hpc/)\033[0m — NÃO rodar aqui; exige 64 GB e CUDA:"
 	@grep -hE '^hpc-[a-zA-Z0-9_-]*:.*?## ' $(firstword $(MAKEFILE_LIST)) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Variáveis (sobrescreva na linha de comando):"
-	@echo "  RECORTE=$(RECORTE)      prefixo IBGE do recorte espacial"
-	@echo "  MEM=$(MEM)         teto de memória do experimento (cgroup)"
-	@echo "  PERIODOS=           competências do ETL; vazio = série canônica"
-	@echo "  EPOCAS=$(EPOCAS)        máximo de épocas no treino"
+	@echo "\033[1mVARIÁVEIS\033[0m (sobrescreva na linha de comando):"
+	@echo "  RECORTE=$(RECORTE)              prefixo IBGE: 355030 capital, 35 estado, vazio país"
+	@echo "  MEM=$(MEM)                 teto de memória do experimento (cgroup)"
+	@echo "  EPOCAS=$(EPOCAS)             máximo de épocas no treino"
+	@echo "  SEMENTE=$(SEMENTE)              varia a inicialização; repita para medir ruído"
+	@echo "  SEM_PANDEMIA=            qualquer valor liga o controle sem 2020/2021"
+	@echo "  MODO=$(MODO)           servidor: compativel replica as limitações de 9 GB"
+	@echo "  PERIODOS=                competências do ETL; vazio = série canônica"
 	@echo ""
-	@echo "  MODO=$(MODO)      modo do pipeline do servidor"
-	@echo ""
-	@echo "Exemplos:"
+	@echo "\033[1mEXEMPLOS\033[0m"
 	@echo "  make etl-periodo PERIODOS=202601"
-	@echo "  make experimento RECORTE=355030"
+	@echo "  make experimento RECORTE=355030 MEM=4G"
+	@echo "  make experimento SEM_PANDEMIA=1"
 	@echo "  make reprocessar-tabelas TABELAS=tbEstabelecimento PERIODO=202601"
-	@echo "  make hpc-experimento RECORTE= MODO=completo      # no servidor"
+	@echo "  make hpc-plano                     # no servidor: o que a bateria vai rodar"
+	@echo "  make hpc-tudo                      # no servidor: a bateria completa"
+	@echo ""
+
+# ============================================================ ambiente
 
 setup:  ## Cria o .venv, instala o pacote e as extensões compiladas do PyG
 	uv venv --python 3.12
@@ -90,26 +127,27 @@ setup:  ## Cria o .venv, instala o pacote e as extensões compiladas do PyG
 	$(PIP) install pyg-lib torch-scatter torch-sparse \
 		--find-links https://data.pyg.org/whl/torch-2.9.0+cpu.html
 
-# --------------------------------------------------------------------- ETL
+# ============================================================ dados
 
 etl:  ## ETL completo, competência por competência (baixa ~3,6 GB de ZIP; horas)
 	@echo "Série canônica completa. Cada competência baixa, ingere e converte,"
-	@echo "e o DuckDB intermediário é apagado ao fim de cada uma."
+	@echo "e o DuckDB intermediário é apagado ao fim de cada uma. Retomável:"
+	@echo "competência já convertida é pulada."
 	$(PY) -m src.etl.pipeline
 
-etl-periodo:  ## ETL de competências específicas (use PERIODOS="202501 202601")
+etl-periodo:  ## ETL de competências específicas (PERIODOS="202501 202601")
 	@test -n "$(PERIODOS)" || { echo "erro: informe PERIODOS, ex: make etl-periodo PERIODOS=202601"; exit 1; }
 	$(PY) -m src.etl.pipeline --periodos $(PERIODOS)
 
 mudancas:  ## Recalcula os eventos de mudança entre snapshots consecutivos
 	@echo "Reprocessa o diff de todas as tabelas. Necessário depois de mexer em"
-	@echo "chave natural ou em tipagem — ver D-27 e D-30."
+	@echo "chave natural ou em tipagem — ver D-27, D-30 e D-38."
 	$(PY) -c "from src.etl.changes import detectar_mudancas, taxa_de_mudanca; \
 		detectar_mudancas(reprocess=True); \
 		t = taxa_de_mudanca(); \
 		print(t[t.tabela == 'rlEstabEquipamento'][['periodo_destino','taxa_mudanca','chave_declarada']].to_string(index=False))"
 
-reprocessar-tabelas:  ## Regera só algumas tabelas na camada primária (TABELAS=a,b PERIODO=YYYYMM)
+reprocessar-tabelas:  ## Regera só algumas tabelas (TABELAS=a,b PERIODO=YYYYMM)
 	@test -n "$(TABELAS)" || { echo "erro: informe TABELAS, ex: TABELAS=tbEstabelecimento"; exit 1; }
 	@test -n "$(PERIODO)" || { echo "erro: informe PERIODO, ex: PERIODO=202601"; exit 1; }
 	@echo "Caminho para quando 01-selecao-tabelas.md admite coluna nova: reprocessa"
@@ -123,7 +161,7 @@ reprocessar-tabelas:  ## Regera só algumas tabelas na camada primária (TABELAS
 		[p.unlink() for p in (d, Path(str(d) + '.wal')) if p.exists()]; \
 		print('intermediário parcial removido')"
 
-# ----------------------------------------------------------------- testes
+# ============================================================ qualidade
 
 testes:  ## Roda a suíte completa
 	$(PY) -m pytest tests/ -q
@@ -141,18 +179,26 @@ verificar:  ## Testes + resumo do schema derivado de docs/01-selecao-tabelas.md
 		print(f'colunas util: {util} | chaves naturais: {len(schema.CNES_NATURAL_KEY)}'); \
 		print(f'fkeys declaradas: {sum(len(v) for v in schema.CNES_FKEY.values())}')"
 
-# ------------------------------------------------------------- experimento
+# ============================================================ experimento
 
-experimento:  ## As três trilhas, com teto de memória (~55 min no estado, pico 6,3 GB)
-	@echo "Recorte $(RECORTE), teto $(MEM). Resultado gravado incrementalmente em"
-	@echo "docs/resultados/. Se o teto estourar, morre o experimento e não o ambiente."
-	$(LIMITADOR) $(PY) -m tools.roda_experimento --recorte $(RECORTE) --epocas $(EPOCAS)
+experimento:  ## As três trilhas, sob cgroup (~55 min no estado, pico 6,3 GB)
+	@echo "Recorte $(RECORTE), teto $(MEM), semente $(SEMENTE). Resultado gravado"
+	@echo "incrementalmente em docs/resultados/. Se o teto estourar, morre o"
+	@echo "experimento e não o ambiente."
+	$(LIMITADOR) $(PY) -m tools.roda_experimento \
+		--recorte $(RECORTE) --epocas $(EPOCAS) --semente $(SEMENTE) $(FLAG_PANDEMIA)
 
 experimento-baselines:  ## Só a trilha 1, sem GNN (~15 min)
-	$(LIMITADOR) $(PY) -m tools.roda_experimento --recorte $(RECORTE) --pular-gnn
+	$(LIMITADOR) $(PY) -m tools.roda_experimento \
+		--recorte $(RECORTE) --semente $(SEMENTE) $(FLAG_PANDEMIA) --pular-gnn
 
-experimento-capital:  ## As três trilhas no município da capital (barato, para depuração)
+experimento-capital:  ## As três trilhas na capital (barato, para depuração)
 	$(MAKE) experimento RECORTE=355030 MEM=4G
+
+experimento-sem-pandemia:  ## Controle: descarta as transições que tocam 2020/2021
+	@echo "Variante exigida pela seção 4.1 da metodologia: a conclusão sobrevive"
+	@echo "ao choque de covid-19?"
+	$(MAKE) experimento SEM_PANDEMIA=1
 
 resultados:  ## Mostra a tabela pareada do resultado mais recente
 	@$(PY) -c "import json, pathlib; \
@@ -163,7 +209,7 @@ resultados:  ## Mostra a tabela pareada do resultado mais recente
 		[print(f\"{n:20s} AP {m['average_precision']:.5f}  AUC {m['auc_roc']:.3f}  MAP@10 {m['map@10']:.4f}\") \
 		 for n, m in sorted(d.get('teste_pareado', {}).items(), key=lambda x: -x[1]['average_precision'])]"
 
-# --------------------------------------------------------------- artefatos
+# ============================================================ artefatos
 
 modelos:  ## Lista os pacotes de modelo em models/, do mais recente ao mais antigo
 	@$(PY) -c "from src.ml.artefatos import listar_execucoes; \
@@ -192,16 +238,15 @@ validar:  ## Recomputa as métricas de um pacote sem GPU e sem data/ (RUN=models
 		print('manifesto confere com as previsões') if not problemas else [print(f'  DIVERGE {x}') for x in problemas]; \
 		sys.exit(1 if problemas else 0)"
 
-# ------------------------------------------------- pipeline do servidor (hpc/)
+# ============================================ pipeline do servidor (hpc/)
 #
 # Delegação para hpc/Makefile, que é a fonte da verdade dos alvos do servidor.
-# Existem aqui para que `make` mostre os dois pipelines de uma vez — e para que
-# fique explícito qual é qual.
+# Existem aqui para que `make` mostre os dois pipelines de uma vez.
 
 hpc-ajuda:  ## Alvos do pipeline do servidor, com as variáveis dele
 	$(MAKE) -f hpc/Makefile help
 
-hpc-ambiente:  ## Perfil da máquina como o pipeline do servidor a vê (roda em qualquer lugar)
+hpc-ambiente:  ## Perfil da máquina como o servidor a vê (roda em qualquer lugar)
 	$(MAKE) -f hpc/Makefile ambiente
 
 hpc-etl:  ## [servidor] ETL nacional, paralelo por competência
@@ -210,13 +255,19 @@ hpc-etl:  ## [servidor] ETL nacional, paralelo por competência
 hpc-grafos:  ## [servidor] Materializa os grafos por transição na camada 05
 	$(MAKE) -f hpc/Makefile grafos RECORTE=$(RECORTE) MODO=$(MODO)
 
-hpc-experimento:  ## [servidor] Uma célula da matriz: RECORTE e MODO escolhem qual
-	$(MAKE) -f hpc/Makefile experimento RECORTE=$(RECORTE) MODO=$(MODO)
+hpc-experimento:  ## [servidor] Uma célula: RECORTE, MODO e SEM_PANDEMIA escolhem qual
+	$(MAKE) -f hpc/Makefile experimento RECORTE=$(RECORTE) MODO=$(MODO) SEM_PANDEMIA=$(SEM_PANDEMIA)
 
-hpc-matriz:  ## [servidor] As quatro células de D-34, em série, sob screen
+hpc-matriz:  ## [servidor] As quatro células de D-34, série completa, em série
 	$(MAKE) -f hpc/Makefile matriz
 
-# ------------------------------------------------------------------- resto
+hpc-plano:  ## [servidor] Imprime o que a bateria completa vai rodar, sem rodar
+	$(MAKE) -f hpc/Makefile plano
+
+hpc-tudo:  ## [servidor] BATERIA COMPLETA: 2 pipelines x 3 escopos x 2 variantes
+	$(MAKE) -f hpc/Makefile tudo
+
+# ============================================================ resto
 
 notebooks:  ## Abre o Jupyter Lab na pasta de notebooks
 	@echo "00_analise_alvo é ponto de decisão bloqueante: as trilhas não devem"

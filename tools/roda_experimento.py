@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.config.paths import DOCS_DIR
+from src.config.paths import DOCS_DIR, PRIMARY_FOLDER
 from src.etl import changes
 from src.ml import artefatos, baselines, gnn, graph, metrics, tasks
 from src.ml.splits import particionar
@@ -35,30 +35,64 @@ PASTA_RESULTADOS = DOCS_DIR / "resultados"
 
 
 def rss_gb() -> float:
+    """
+    Pico de memória residente do processo até agora.
+
+    Returns:
+        Gigabytes. É pico acumulado, não uso instantâneo — o que interessa numa
+        máquina de 9 GB é o máximo que já se pediu.
+    """
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
 
 
 def log(msg: str) -> None:
+    """
+    Imprime com hora e pico de memória, sem buffer.
+
+    Args:
+        msg: mensagem a registrar. O pico vai em toda linha porque memória é a
+            restrição que decide se a execução termina.
+    """
     print(f"[{time.strftime('%H:%M:%S')}  pico {rss_gb():.2f} GB] {msg}", flush=True)
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando das três trilhas.
+
+    Returns:
+        0 em sucesso. Código de saída do processo.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--recorte", default=graph.RECORTE_PADRAO)
     ap.add_argument("--epocas", type=int, default=150)
     ap.add_argument("--paciencia", type=int, default=15)
     ap.add_argument("--k-vizinhos", type=int, default=10)
     ap.add_argument("--pular-gnn", action="store_true")
+    ap.add_argument("--semente", type=int, default=gnn.SEMENTE,
+                    help="varia o sorteio de minilote e a inicialização; repetir "
+                         "a execução com sementes diferentes é o que mede a banda "
+                         "de ruído")
+    ap.add_argument("--excluir-pandemia", action="store_true",
+                    help="descarta toda transição que toque 202001 ou 202101; é o "
+                         "experimento de controle da seção 4.1 da metodologia")
+    ap.add_argument("--pasta-primaria", type=Path, default=None,
+                    help="camada primária alternativa; no cluster aponta para "
+                         "$IC_HPC_DATA/03_primary, que é onde o ETL do servidor grava")
     ap.add_argument("--saida", type=Path, default=None)
     args = ap.parse_args()
 
+    pasta_primaria = args.pasta_primaria or PRIMARY_FOLDER
+
     PASTA_RESULTADOS.mkdir(parents=True, exist_ok=True)
+    variante = "sem-pandemia" if args.excluir_pandemia else "com-pandemia"
     saida = args.saida or (
-        PASTA_RESULTADOS / f"{date.today()}-trilhas-{args.recorte}.json"
+        PASTA_RESULTADOS
+        / f"{date.today()}-trilhas-{args.recorte or 'pais'}-{variante}-s{args.semente}.json"
     )
 
-    periodos = changes.periodos_disponiveis()
-    particao = particionar(periodos)
+    periodos = changes.periodos_disponiveis(pasta_primaria)
+    particao = particionar(periodos, excluir_pandemia=args.excluir_pandemia)
     # O grafo é estático, então o corte tem de ser anterior a QUALQUER rótulo, e
     # não apenas ao fim do treino: a aresta estabelecimento-equipamento em t+1 é
     # o alvo da transição que termina em t+1. Ver D-25.
@@ -68,6 +102,8 @@ def main() -> int:
         "experimento": "aquisicao de equipamento — tres trilhas",
         "data": str(date.today()),
         "recorte": args.recorte,
+        "excluir_pandemia": args.excluir_pandemia,
+        "semente": args.semente,
         "snapshots": periodos,
         "particao": {
             "treino": [t.destino for t in particao.treino],
@@ -79,16 +115,25 @@ def main() -> int:
     }
 
     def salvar() -> None:
+        """
+        Grava o JSON de resultados agora, sobrescrevendo.
+
+        Chamado depois de cada modelo: uma queda na trilha 3 preserva a 1 e a 2,
+        que é a razão de este script existir além do notebook.
+        """
         saida.write_text(
             json.dumps(resultados, indent=2, ensure_ascii=False, default=float),
             encoding="utf-8",
         )
 
-    log(f"recorte {args.recorte!r} | snapshots {len(periodos)}")
+    log(f"recorte {args.recorte!r} | snapshots {len(periodos)} | "
+        f"{variante} | semente {args.semente}")
     log(f"fim do treino {particao.fim_do_treino} | corte do grafo {corte_grafo}")
 
     # ---------------------------------------------------------------- tarefa
-    tarefa = tasks.tarefa_aquisicao(particao, recorte=args.recorte)
+    tarefa = tasks.tarefa_aquisicao(
+        particao, recorte=args.recorte, pasta=pasta_primaria
+    )
     resultados["tarefa"] = {
         "linhas": len(tarefa.df),
         "positivos": int(tarefa.df[tasks.COL_ROTULO].sum()),
@@ -102,7 +147,9 @@ def main() -> int:
     # com todas as colunas e chega a 5,3 GB numa máquina de 9 GB (D-23).
     t0 = time.time()
     db = graph.montar_db(
-        recorte=args.recorte, colunas=graph.colunas_minimas_para_grafo()
+        recorte=args.recorte,
+        pasta=pasta_primaria,
+        colunas=graph.colunas_minimas_para_grafo(),
     )
     log(f"Database em {time.time() - t0:.0f}s: {len(db.table_dict)} tabelas")
 
@@ -136,6 +183,16 @@ def main() -> int:
         curva de precisão–revocação ou reavaliar sem repetir o treino. Agora o
         escore por exemplo vai para o disco junto com a métrica, o índice e — nas
         trilhas com treino — os pesos. Ver D-35.
+
+        Args:
+            previsao: `Previsao` a avaliar.
+            nome: rótulo do modelo na tabela de resultados.
+            modelo: modelo treinado. `None` para baseline.
+            curva: histórico de treino.
+            indice_do_modelo: índice **do modelo**, não do experimento. A trilha 3
+                só alcança os posicionáveis e portanto tem outra ordem de
+                `unidades`; salvar a ordem errada dá um pacote que carrega sem
+                erro e pontua lixo.
         """
         resultados.setdefault("teste_completo", {})[nome] = (
             metrics.avaliar_classificacao(
@@ -169,6 +226,8 @@ def main() -> int:
             {"teste_completo": completo, "teste_pareado": pareado},
             escopo=args.recorte,
             modo="compativel",
+            variante=variante,
+            semente=args.semente,
             modelo=modelo,
             unidades=do_modelo.unidades if modelo is not None else None,
             itens_indice=do_modelo.itens if modelo is not None else None,
@@ -180,7 +239,8 @@ def main() -> int:
                 "paciencia": args.paciencia,
                 "k_vizinhos": args.k_vizinhos,
                 "negativos_por_positivo": 200,
-                "semente": gnn.SEMENTE,
+                "semente": args.semente,
+                "excluir_pandemia": args.excluir_pandemia,
             },
             extra={
                 "pipeline": "src (máquina local)",
@@ -233,6 +293,7 @@ def main() -> int:
     modelo, historico = gnn.treinar_aquisicao(
         tarefa, particao, dados_rel, indice,
         epocas=args.epocas, paciencia=args.paciencia, verboso=True,
+        semente=args.semente,
     )
     resultados.setdefault("treino", {})["gnn_relacional"] = {
         "segundos": round(time.time() - t0),
@@ -270,6 +331,7 @@ def main() -> int:
     modelo, historico = gnn.treinar_aquisicao(
         tarefa, particao, dados_geo, indice_geo,
         epocas=args.epocas, paciencia=args.paciencia, verboso=True,
+        semente=args.semente,
     )
     resultados.setdefault("treino", {})["gnn_geografica"] = {
         "segundos": round(time.time() - t0),

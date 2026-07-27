@@ -60,6 +60,12 @@ class BaseGNN(torch.nn.Module):
     """Duas camadas SAGE com normalização e dropout. Herdada de src/model.py."""
 
     def __init__(self, hidden_channels: int, out_channels: int, dropout: float = 0.15):
+        """
+        Args:
+            hidden_channels: dimensão das duas camadas de convolução.
+            out_channels: dimensão do embedding de saída.
+            dropout: taxa aplicada depois de cada convolução, só em treino.
+        """
         super().__init__()
         self.conv1 = SAGEConv((-1, -1), hidden_channels)
         self.norm1 = LayerNorm(hidden_channels)
@@ -69,6 +75,14 @@ class BaseGNN(torch.nn.Module):
         self.dropout = dropout
 
     def forward(self, x, edge_index):
+        """
+        Args:
+            x: features de nó.
+            edge_index: arestas em formato `(2, E)`.
+
+        Returns:
+            Embedding por nó, com `out_channels` dimensões.
+        """
         x = self.norm1(self.conv1(x, edge_index)).relu()
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.norm2(self.conv2(x, edge_index)).relu()
@@ -86,6 +100,13 @@ class DynamicHeteroGNN(torch.nn.Module):
     """
 
     def __init__(self, metadata, hidden_channels: int, out_channels: int):
+        """
+        Args:
+            metadata: par `(tipos_de_no, tipos_de_aresta)`, como
+                `HeteroData.metadata()` devolve.
+            hidden_channels: dimensão da projeção e das convoluções.
+            out_channels: dimensão do embedding de saída.
+        """
         super().__init__()
         self.lin_dict = ModuleDict(
             {tipo: Linear(-1, hidden_channels) for tipo in metadata[0]}
@@ -95,6 +116,14 @@ class DynamicHeteroGNN(torch.nn.Module):
         )
 
     def forward(self, x_dict, edge_index_dict):
+        """
+        Args:
+            x_dict: features por tipo de nó.
+            edge_index_dict: arestas por tipo de relação.
+
+        Returns:
+            Mapa `{tipo_de_no: embedding}`. O do tipo raiz é o que o decoder usa.
+        """
         projetado = {
             tipo: self.lin_dict[tipo](x).relu() for tipo, x in x_dict.items()
         }
@@ -111,11 +140,25 @@ class GNNGeografica(torch.nn.Module):
     """
 
     def __init__(self, in_channels: int, hidden_channels: int, out_channels: int):
+        """
+        Args:
+            in_channels: número de colunas das features de estabelecimento.
+            hidden_channels: dimensão da projeção e das convoluções.
+            out_channels: dimensão do embedding de saída.
+        """
         super().__init__()
         self.proj = Linear(in_channels, hidden_channels)
         self.gnn = BaseGNN(hidden_channels, out_channels)
 
     def forward(self, x, edge_index):
+        """
+        Args:
+            x: features dos estabelecimentos posicionáveis.
+            edge_index: arestas do kNN geográfico, já simetrizadas.
+
+        Returns:
+            Embedding por estabelecimento.
+        """
         return self.gnn(self.proj(x).relu(), edge_index)
 
 
@@ -134,6 +177,14 @@ class DecoderAquisicao(torch.nn.Module):
     """
 
     def __init__(self, dim_no: int, n_itens: int, dim_item: int = 32, oculto: int = 64):
+        """
+        Args:
+            dim_no: dimensão do embedding de estabelecimento vindo do encoder.
+            n_itens: tamanho do vocabulário de itens. **Indexado por posição**,
+                então a ordem de `IndicePares.itens` é parte dos pesos (D-35).
+            dim_item: dimensão do embedding aprendido de item.
+            oculto: largura da camada escondida do MLP.
+        """
         super().__init__()
         self.emb_item = Embedding(n_itens, dim_item)
         self.mlp = torch.nn.Sequential(
@@ -143,6 +194,15 @@ class DecoderAquisicao(torch.nn.Module):
         )
 
     def forward(self, z_no: torch.Tensor, idx_item: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            z_no: embedding do estabelecimento de cada par, forma `(N, dim_no)`.
+            idx_item: índice do item de cada par, forma `(N,)`.
+
+        Returns:
+            Logito por par, forma `(N,)`. Sem sigmoide — a perda usada é
+            `binary_cross_entropy_with_logits`.
+        """
         return self.mlp(torch.cat([z_no, self.emb_item(idx_item)], dim=-1)).squeeze(-1)
 
 
@@ -150,6 +210,12 @@ class ModeloAquisicao(torch.nn.Module):
     """Encoder de grafo mais decoder de par, treinados juntos."""
 
     def __init__(self, encoder: torch.nn.Module, decoder: DecoderAquisicao):
+        """
+        Args:
+            encoder: `DynamicHeteroGNN` na trilha 2, `GNNGeografica` na trilha 3.
+            decoder: o mesmo nas duas trilhas, para que a diferença de resultado
+                não possa vir do decoder.
+        """
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -177,6 +243,18 @@ class IndicePares:
 
     @classmethod
     def de(cls, unidades: list[str], itens: list[str]) -> "IndicePares":
+        """
+        Constrói o índice a partir das duas listas ordenadas.
+
+        Args:
+            unidades: `co_unidade` **na ordem em que o grafo tem os nós**. Ordem
+                diferente da do grafo produz um modelo que carrega sem erro e
+                pontua lixo.
+            itens: vocabulário de itens, na ordem que o embedding vai usar.
+
+        Returns:
+            Índice com as duas listas e os dois mapas de tradução.
+        """
         return cls(
             unidades=unidades,
             itens=itens,
@@ -195,6 +273,21 @@ def features_de_estabelecimento(
     numéricas como float, tomando a observação mais recente até `ate_periodo`.
     O corte por período é o que impede vazamento: as features do treino não
     podem enxergar snapshots posteriores ao fim da janela de treino.
+
+    Args:
+        db: `Database` de onde sai a tabela raiz.
+        unidades: `co_unidade` na ordem desejada das linhas. Unidade ausente do
+            recorte até o corte sai com a linha toda nula, o que no estado
+            acontece com 45% dos nós (D-32).
+        ate_periodo: competência limite, inclusive. `None` usa a série inteira, o
+            que só é correto fora de contexto de treino.
+
+    Returns:
+        Tensor `float` de forma `(len(unidades), n_colunas)`. Categórica vira
+        código inteiro em float; numérica ausente vira -1.
+
+    Raises:
+        ErroGNN: nenhuma linha da tabela raiz até o corte.
     """
     from src.ml.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
 
@@ -226,7 +319,17 @@ def features_de_estabelecimento(
 def grafo_geografico_para_data(
     grafo: GrafoGeografico, features: torch.Tensor
 ) -> Data:
-    """Converte o grafo de proximidade para o formato do PyTorch Geometric."""
+    """
+    Converte o grafo de proximidade para o formato do PyTorch Geometric.
+
+    Args:
+        grafo: `GrafoGeografico` com as arestas já simetrizadas.
+        features: matriz de features na ordem de `grafo.unidades`.
+
+    Returns:
+        `Data` homogêneo. Sem peso de aresta: `SAGEConv` o ignoraria, e a
+        distância só entra como critério de existência da aresta.
+    """
     arestas = grafo.arestas.to_pandas()
     edge_index = torch.tensor(
         np.stack([arestas["origem"].to_numpy(), arestas["destino"].to_numpy()]),
@@ -248,6 +351,14 @@ def _e_categoria_de_relacao(coluna: str, dtypes: dict[str, str]) -> bool:
     da ordem do número de linhas e viram um nó por linha, que é justamente o que
     D-25 removeu. E exclui município: é localização, e um nó por município liga
     todos os estabelecimentos da cidade entre si.
+
+    Args:
+        coluna: nome da coluna a avaliar.
+        dtypes: mapa `{coluna: dtype}` da tabela, vindo de `CNES_DTYPES`.
+
+    Returns:
+        `True` se a coluna serve de vocabulário: é `category`, não é a chave da
+        entidade e não é município.
     """
     return (
         dtypes.get(coluna) == "category"
@@ -266,6 +377,13 @@ def escolher_categoria(tabela: str) -> str | None:
     natural declarada, e várias começam por `co_municipio` ou trazem sequenciais
     (`co_seq_central`, `sq_acolhimento`): tomar `natural[0]` cegamente escolheria
     essas. Sem componente aproveitável, cai para a coluna `category` da tabela.
+
+    Args:
+        tabela: nome da tabela de fato.
+
+    Returns:
+        Nome da coluna escolhida, ou `None` se a tabela não tem nenhuma coluna
+        aproveitável — caso em que ela não entra no grafo como relação.
     """
     from src.config.schema import CNES_DTYPES, CNES_NATURAL_KEY, CNES_USEFUL_COLUMNS
 
@@ -305,6 +423,15 @@ def _features_de_categoria(n: int, dim: int = 32, semente: int = SEMENTE) -> tor
     A alternativa óbvia, one-hot, custaria uma matriz `n × n` — inviável para os
     vocabulários maiores. Usa-se então uma projeção aleatória fixa, que preserva
     distinguibilidade em dimensão baixa e é determinística pela semente.
+
+    Args:
+        n: tamanho do vocabulário de categorias.
+        dim: dimensão desejada. Reduzida a `n` quando o vocabulário é menor.
+        semente: semente da projeção. Fixa, senão os nós de categoria mudariam
+            de representação entre execuções.
+
+    Returns:
+        Tensor `(n, min(dim, n))` com a projeção aleatória fixa.
     """
     gerador = torch.Generator().manual_seed(semente)
     return torch.randn((n, min(dim, max(n, 1))), generator=gerador)
@@ -346,7 +473,23 @@ def grafo_relacional_para_data(
     período com o rótulo escrito no grafo, porque a aresta entre estabelecimento
     e equipamento em `t+1` é exatamente o alvo. Ver D-25.
 
-    `min_arestas` descarta relações raras demais para contribuir.
+    Args:
+        db: `Database` de onde saem a raiz e as tabelas de fato.
+        unidades: `co_unidade` na ordem dos índices de nó.
+        features: matriz de features da raiz, na ordem de `unidades`.
+        ate_periodo: **obrigatório**, e tem de ser
+            `ParticaoTemporal.antes_de_todos_os_rotulos`. Ver a explicação acima.
+        min_arestas: relações com menos arestas que isso são descartadas, por
+            serem raras demais para contribuir.
+
+    Returns:
+        `HeteroData` com um tipo de nó por vocabulário de categoria mais a raiz,
+        e uma relação por tabela de fato aproveitável. No estado dá 25 tipos de
+        nó e 48 relações.
+
+    Raises:
+        ErroGNN: `ate_periodo` não foi passado. A recusa é deliberada — o default
+            silencioso deixaria o rótulo dentro do grafo (D-25).
     """
     from src.ml.graph import COL_TEMPO, TABELA_RAIZ, data_do_periodo
 
@@ -425,6 +568,17 @@ def _tensores_da_tarefa(
     entidades na mesma ordem dos escores. Descarta pares cuja entidade ou item
     não estão no grafo — um estabelecimento sem coordenada válida, por exemplo,
     não é nó da trilha geográfica.
+
+    Args:
+        tarefa: tabela de rótulos.
+        indice: mapeamento de entidade e item para posição de tensor.
+        conjunto: `"treino"`, `"validacao"` ou `"teste"`.
+
+    Returns:
+        Tupla `(u, k, y, df)`: índices de unidade, índices de item, rótulos e o
+        DataFrame filtrado, todos na mesma ordem. Como o minilote de treino é
+        sorteado por posição sobre estes tensores, a ordem da tabela de tarefa
+        precisa ser canônica — ver D-43.
     """
     df = tarefa.por_conjunto(conjunto)
     conhecidos = df[tarefa.col_entidade].isin(indice.idx_unidade) & df[
@@ -464,6 +618,17 @@ def _pontuar_em_blocos(
     vez pelo MLP do decoder materializaria uma matriz de entrada de vários
     gigabytes; em blocos, o pico é o de um bloco. `float32` em vez de `float64`
     corta o resultado pela metade sem perda relevante para ranquear.
+
+    Args:
+        modelo: modelo treinado; só o decoder é usado aqui.
+        z: embedding de todos os nós, já calculado uma vez.
+        u: índice de unidade de cada par.
+        k: índice de item de cada par.
+        dispositivo: `"cuda"` ou `"cpu"`.
+        bloco: pares por bloco.
+
+    Returns:
+        Vetor `float32` de logitos, na ordem de `u`.
     """
     saidas = []
     for inicio in range(0, len(u), bloco):
@@ -476,7 +641,18 @@ def _pontuar_em_blocos(
 
 
 def _codificar_grafo(modelo: ModeloAquisicao, dados, tabela_raiz: str) -> torch.Tensor:
-    """Roda o encoder e devolve o embedding dos estabelecimentos."""
+    """
+    Roda o encoder e devolve o embedding dos estabelecimentos.
+
+    Args:
+        modelo: modelo com o encoder a executar.
+        dados: `HeteroData` na trilha 2, `Data` na trilha 3.
+        tabela_raiz: tipo de nó a extrair do resultado heterogêneo.
+
+    Returns:
+        Embedding por estabelecimento. Absorve a diferença entre as duas trilhas,
+        que é o que permite o resto do laço de treino ser um só.
+    """
     if isinstance(dados, HeteroData):
         saida = modelo.encoder(dados.x_dict, dados.edge_index_dict)
         return saida[tabela_raiz]
@@ -496,6 +672,7 @@ def treinar_aquisicao(
     verboso: bool = False,
     lote_treino: int = 500_000,
     amostra_validacao: int = 2_000_000,
+    semente: int = SEMENTE,
 ) -> tuple[ModeloAquisicao, dict]:
     """
     Treina o modelo de aquisição, selecionando época pela **validação**.
@@ -521,9 +698,30 @@ def treinar_aquisicao(
     `prever_aquisicao`. Subamostrar a avaliação final tornaria a prevalência
     artificial e o AP incomparável (D-23).
 
-    Devolve o modelo com os pesos da melhor época de validação, e o histórico.
+    Args:
+        tarefa: tabela de rótulos, já particionada.
+        particao: partição temporal, usada para localizar os conjuntos.
+        dados: `HeteroData` do grafo relacional, ou `Data` do geográfico.
+        indice: mapeamento de `co_unidade` e item para posição, na ordem em que o
+            grafo tem os nós. Ordem errada carrega sem erro e pontua lixo (D-35).
+        dim_saida: dimensão do embedding produzido pelo encoder.
+        epocas: teto de épocas; a parada antecipada normalmente corta antes.
+        lr: taxa de aprendizado do Adam.
+        paciencia: épocas sem melhora de AP de validação antes de parar.
+        dispositivo: `"cuda"` ou `"cpu"`. `None` escolhe CUDA se houver.
+        verboso: imprime perda e AP de validação a cada 20 épocas.
+        lote_treino: pares sorteados por época para o passo de gradiente.
+        amostra_validacao: teto de pares da validação usados como sinal de parada.
+        semente: semente do sorteio de minilote e da amostra de validação.
+            Variá-la entre execuções é a única forma de medir a banda de ruído —
+            duas execuções idênticas já divergiram 15% em AP de baseline.
+
+    Returns:
+        Par `(modelo, historico)`. O modelo carrega os pesos da melhor época de
+        validação, não os da última. `historico` traz `melhor_epoca`,
+        `melhor_ap_validacao`, `epocas_rodadas`, `dispositivo` e a curva por época.
     """
-    torch.manual_seed(SEMENTE)
+    torch.manual_seed(semente)
     dispositivo = dispositivo or ("cuda" if torch.cuda.is_available() else "cpu")
 
     from src.ml.graph import TABELA_RAIZ
@@ -544,7 +742,7 @@ def treinar_aquisicao(
     u_va, k_va, y_va, _ = _tensores_da_tarefa(tarefa, indice, "validacao")
 
     # Amostra de validação fixa, sorteada uma vez. Ver a docstring.
-    gerador = torch.Generator().manual_seed(SEMENTE)
+    gerador = torch.Generator().manual_seed(semente)
     if len(y_va) > amostra_validacao:
         escolha = torch.randperm(len(y_va), generator=gerador)[:amostra_validacao]
         u_va, k_va, y_va = u_va[escolha], k_va[escolha], y_va[escolha]
@@ -630,6 +828,21 @@ def prever_aquisicao(
     Devolver `Previsao` é o que permite jogar GNN e baselines na mesma tabela de
     `src.ml.metrics.tabela_de_resultados` — a regra de reporte de D-11 vira o
     caminho de menor esforço em vez de disciplina manual.
+
+    Args:
+        modelo: modelo treinado, com os pesos da melhor época de validação.
+        tarefa: tabela de rótulos.
+        dados: grafo, o mesmo usado no treino.
+        indice: índice do **modelo**, não do experimento. A trilha 3 alcança só
+            os posicionáveis e portanto tem outra ordem de `unidades`.
+        conjunto: conjunto a pontuar. Pontuado por completo, nunca amostrado.
+        nome: rótulo que aparece na tabela de resultados.
+        dispositivo: `"cuda"` ou `"cpu"`. `None` usa o do modelo.
+
+    Returns:
+        `Previsao` com rótulos, escores e entidades alinhados, mais metadados com
+        o número de pares avaliados e descartados. Descartados são pares cuja
+        entidade não é nó do grafo.
     """
     from src.ml.graph import TABELA_RAIZ
 

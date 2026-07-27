@@ -41,10 +41,22 @@ PASTA_RESULTADOS = DOCS_DIR / "resultados"
 
 
 def log(msg: str) -> None:
+    """
+    Imprime com hora, sem buffer.
+
+    Args:
+        msg: mensagem a registrar. Sem buffer porque a execução vive sob `screen`.
+    """
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando de uma célula da matriz.
+
+    Returns:
+        0 em sucesso. Código de saída do processo.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--recorte", default="", help="prefixo IBGE; vazio = país inteiro")
     ap.add_argument("--modo", choices=["compativel", "completo"], default="completo")
@@ -63,26 +75,36 @@ def main() -> int:
                     help="camada primária alternativa; usada no smoke fora do servidor")
     ap.add_argument("--reusar-grafos", action="store_true",
                     help="carrega da camada 05 em vez de montar")
+    ap.add_argument("--semente", type=int, default=42,
+                    help="varia inicialização e sorteio de lote; repetir com "
+                         "sementes diferentes é o que mede a banda de ruído")
+    ap.add_argument("--excluir-pandemia", action="store_true",
+                    help="descarta toda transição que toque 202001 ou 202101; é o "
+                         "experimento de controle da seção 4.1 da metodologia")
     args = ap.parse_args()
 
     recorte = args.recorte or None
     dispositivo = exigir_cuda(permitir_cpu=args.permitir_cpu)
     perfil = perfil_maquina()
-    semente_global()
+    semente_global(args.semente)
 
     pasta_primaria = args.pasta_primaria or primary_folder()
     periodos = periodos_disponiveis(pasta_primaria)
-    particao = particionar(periodos)
+    particao = particionar(periodos, excluir_pandemia=args.excluir_pandemia)
 
     PASTA_RESULTADOS.mkdir(parents=True, exist_ok=True)
+    variante = "sem-pandemia" if args.excluir_pandemia else "com-pandemia"
     saida = PASTA_RESULTADOS / (
-        f"{date.today()}-hpc-{recorte or 'pais'}-{args.modo}.json"
+        f"{date.today()}-hpc-{recorte or 'pais'}-{args.modo}"
+        f"-{variante}-s{args.semente}.json"
     )
     resultados: dict = {
         "experimento": "aquisicao de equipamento — pipeline do servidor",
         "data": str(date.today()),
         "recorte": recorte,
         "modo": args.modo,
+        "excluir_pandemia": args.excluir_pandemia,
+        "semente": args.semente,
         "snapshots": periodos,
         "dispositivo": dispositivo,
         "maquina": perfil.como_dict(),
@@ -93,13 +115,21 @@ def main() -> int:
     }
 
     def salvar() -> None:
+        """
+        Grava o JSON de resultados agora, sobrescrevendo.
+
+        Chamado depois de cada etapa: uma queda no meio preserva o que já foi
+        medido, e no cluster, sem escalonador, isso é a diferença entre perder uma
+        etapa e perder a execução.
+        """
         saida.write_text(
             json.dumps(resultados, indent=2, ensure_ascii=False, default=float),
             encoding="utf-8",
         )
 
     log(f"host {perfil.host} | dispositivo {dispositivo} | modo {args.modo}")
-    log(f"recorte {recorte or 'país'} | {len(periodos)} snapshots")
+    log(f"recorte {recorte or 'país'} | {len(periodos)} snapshots | "
+        f"{variante} | semente {args.semente}")
 
     # ---------------------------------------------------------------- tarefa
     t0 = time.time()
@@ -146,6 +176,19 @@ def main() -> int:
     itens_do_teste = tarefa.por_conjunto("teste")[tarefa.col_item]
 
     def avaliar(previsao, nome, modelo=None, curva=None, hiper=None) -> None:
+        """
+        Mede nas duas visões, grava o pacote e atualiza o JSON.
+
+        Args:
+            previsao: `Previsao` a avaliar.
+            nome: rótulo do modelo na tabela de resultados.
+            modelo: modelo treinado. `None` para baseline, que não tem pesos.
+            curva: histórico de treino.
+            hiper: hiperparâmetros, para a procedência do manifesto.
+
+        A visão pareada restringe todas as trilhas aos posicionáveis, que é a
+        única comparação legítima quando a trilha geográfica está envolvida (D-15).
+        """
         completo = metrics.avaliar_classificacao(
             previsao.y, previsao.escore, previsao.entidades, k=10
         )
@@ -166,6 +209,8 @@ def main() -> int:
             {"teste_completo": completo, "teste_pareado": pareado},
             escopo=recorte,
             modo=args.modo,
+            variante=variante,
+            semente=args.semente,
             modelo=modelo,
             unidades=indice.unidades if modelo is not None else None,
             itens_indice=indice.itens if modelo is not None else None,
@@ -198,6 +243,9 @@ def main() -> int:
 
     # ------------------------------------------------------- grafo e trilha 2
     conjunto = nome_do_conjunto(recorte, args.modo)
+    # A variante de pandemia muda a partição, e a partição muda o corte de cada
+    # grafo — reusar os grafos da outra variante seria vazamento silencioso.
+    conjunto = f"{conjunto}-{variante}"
     caminho_grafos = grafos_folder(criar=True) / conjunto / "grafos.pt"
     if args.reusar_grafos and caminho_grafos.exists():
         log(f"carregando grafos de {caminho_grafos}")
@@ -210,6 +258,7 @@ def main() -> int:
             pasta_primaria=pasta_primaria,
             destino=caminho_grafos.parent,
             permitir_maquina_pequena=args.permitir_maquina_pequena,
+            excluir_pandemia=args.excluir_pandemia,
         )
         grafos = carregar_grafos(caminho_grafos)
         log(f"grafos montados em {time.time() - t0:.0f}s")
@@ -233,6 +282,8 @@ def main() -> int:
         "validar_cada": args.validar_cada,
         "amp": not args.sem_amp,
         "modo": args.modo,
+        "semente": args.semente,
+        "excluir_pandemia": args.excluir_pandemia,
         "negativos_por_positivo": 200 if args.modo == "compativel" else None,
     }
 
