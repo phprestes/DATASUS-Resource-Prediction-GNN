@@ -1117,7 +1117,7 @@ snapshots e de oito para **nove** transições.
 |---|---|---|
 | Aquisições de equipamento (SP) | 34.571 | **40.880** |
 | Candidatos | 73,4 M | 86,7 M |
-| Prevalência | 0,0465% | **0,0472%** |
+| Prevalência agregada | 0,0471% | **0,0472%** |
 | Estabelecimentos no recorte | 136.561 | 146.500 |
 | Cobertura de coordenada | 85,67% | **87,27%** |
 
