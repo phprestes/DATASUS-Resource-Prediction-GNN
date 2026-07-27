@@ -147,6 +147,35 @@ amostras de um mesmo processo. Duas obrigações decorrem disso:
 2. Rodar uma variante do experimento excluindo as transições 2020 e 2021, e
    relatar se a conclusão muda.
 
+A exclusão descarta toda transição que **toque** um snapshot de pandemia, em qualquer
+das duas pontas. Excluir apenas pelo destino deixaria passar 202101 para 202201, que
+mede a variação a partir de uma base já distorcida pelo choque — o que anularia o
+propósito da variante.
+
+A variante é `--excluir-pandemia` nos dois orquestradores, e a bateria completa do
+servidor roda as duas versões de cada célula (`make hpc-tudo`).
+
+### 4.2 Banda de ruído entre execuções
+
+Duas execuções do mesmo código sobre os mesmos dados chegaram a produzir MAP@10 de
+0,300 e 0,189 para a GNN relacional, com a parada antecipada disparando na época 99
+numa e na 10 na outra. A causa foi encontrada e corrigida: a tabela de tarefa saía do
+DuckDB em ordem não determinística, e o minilote de treino é sorteado por índice —
+mesma semente sobre ordens diferentes seleciona linhas diferentes (D-43).
+
+Com a ordem canônica, duas execuções em processos separados escolhem a mesma época e
+o AP de validação difere na oitava casa decimal. O resíduo é ruído de ponto flutuante
+entre threads, de ordem 1e-7.
+
+**Consequência para os resultados anteriores.** Todo número de GNN medido antes de
+D-43 saiu de uma ordem arbitrária de linhas, o que inclui D-24, D-26 e D-32. Não são
+resultados errados no cálculo — são irreprodutíveis, que para comparar configurações dá
+no mesmo. O primeiro resultado reportável é D-44.
+
+A repetição por semente continua necessária, agora para medir variação de
+inicialização e não irreprodutibilidade: a bateria aceita `SEMENTES=n`, e o número de
+épocas até a parada é reportado junto com a métrica.
+
 ## 5. As quatro trilhas
 
 Cada trilha isola uma fonte distinta de poder preditivo. Elas não são
@@ -213,6 +242,18 @@ fenômeno de vizinhança — e a mais frágil quanto a dados: depende do
 preenchimento e da sanidade das coordenadas, que o notebook 00 verifica antes de
 a trilha ser considerada viável.
 
+**Cobertura e viés, medidos.** No recorte estadual, 87,3% dos estabelecimentos têm
+coordenada plausível (D-22; D-17 dizia 57%, medido sobre parte da série). A exclusão
+**não é aleatória**: V de Cramér de 0,349 em `co_natureza_jur` e 0,153 em `tp_pfpj`,
+com pessoa jurídica 10,7 pontos mais coberta que pessoa física. Mas ela **não alcança
+os rótulos** — os não posicionáveis concentram 3,9% das aquisições da série e nenhuma
+das duas transições mais recentes (D-41).
+
+Duas consequências, ambas obrigatórias. A comparação com as trilhas 1 e 2 é sempre
+feita sobre o mesmo subconjunto de nós, senão mede diferença de amostra em vez de
+diferença de estrutura. E o reporte da trilha 3 declara que ela descreve a parcela
+geocodificada da rede, que sobre-representa pessoa jurídica — não a rede inteira.
+
 ### Trilha 4 — Análise exploratória
 
 `notebook/00_analise_alvo.ipynb`. Não produz modelo. Produz as decisões que as
@@ -266,6 +307,18 @@ como característica do problema, não como defeito a corrigir (D-19).
   prevalência ao lado.
 - **AUC-ROC** como terciária, por comparabilidade com a literatura.
 
+**As duas primeiras discordam, e a discordância é o resultado do trabalho.** Medido em
+D-44: a GNN relacional lidera AP (0,00650 contra 0,00289 do melhor modelo sem
+estrutura) e perde MAP@10 (0,2533 contra 0,2725 de `popularidade_item`, que ignora
+inteiramente o estabelecimento). Não é contradição: AP mede ordenação global e MAP@k
+mede ordenação dentro da entidade. A leitura é que a estrutura informa **onde** na rede
+uma aquisição acontece, e não **qual** equipamento uma unidade adquire.
+
+Segue-se uma obrigação de reporte: **as duas métricas aparecem sempre juntas**, e
+nenhuma conclusão é tirada de uma sem a outra ao lado. Reportar só AP diria que a
+estrutura ganha; reportar só MAP@10 diria que perde. As duas afirmações são
+verdadeiras sobre dimensões diferentes.
+
 ~~Tarefa secundária, regressão: **RMSE** e **MAE**.~~ A tarefa secundária foi medida
 e **rejeitada** (D-37): apenas 1,119% dos pares persistentes mudam de quantidade entre
 duas competências, e prever zero tem RMSE igual ao desvio padrão do alvo. RMSE e MAE
@@ -281,5 +334,13 @@ anterior do projeto violou-a de forma silenciosa — a função de teste em
 desempenho de teste não era desempenho de teste.
 
 Toda tabela de resultado deve trazer, no mínimo: persistência ingênua, modelo
-geral tabular, RDL relacional e GNN geográfica, sobre a mesma partição, com a
-métrica principal e o número de exemplos de cada conjunto.
+geral tabular, RDL relacional e GNN geográfica, sobre a mesma partição, com **AP e
+MAP@10 lado a lado** e o número de exemplos de cada conjunto.
+
+Duas obrigações acrescentadas por medição:
+
+- **O número de épocas até a parada antecipada é resultado**, não detalhe de
+  implementação: ele varia entre execuções e explica a métrica. Reportado junto.
+- **A ordem da tabela de rótulos é canônica** e há teste que o garante. Sem isso o
+  minilote de treino muda entre execuções com a mesma semente, e nada é reprodutível
+  (D-43).

@@ -6,7 +6,7 @@ pendente. O README descreve o repositório; este documento organiza o argumento
 científico.
 
 As fontes primárias são os demais documentos de `docs/`: a metodologia detalhada em
-[`02-metodologia.md`](02-metodologia.md), o racional de cada escolha nas 37 entradas
+[`02-metodologia.md`](02-metodologia.md), o racional de cada escolha nas 44 entradas
 de [`03-decisoes.md`](03-decisoes.md), a especificação do schema em
 [`01-selecao-tabelas.md`](01-selecao-tabelas.md) e o critério de admissão de fontes
 externas em [`04-dados-externos.md`](04-dados-externos.md). O segundo pipeline, que
@@ -14,8 +14,17 @@ levanta as limitações de hardware, está descrito em
 [`06-pipeline-hpc.md`](06-pipeline-hpc.md).
 
 **Estado da redação.** As seções 1, 3, 4, 5 e 7 dispõem de conteúdo medido e podem
-ser redigidas na forma final. A seção 2 (trabalhos relacionados) constitui a
-principal lacuna. A seção 6 depende do experimento de ablação descrito em 6.1.
+ser redigidas na forma final. A seção 2 (trabalhos relacionados) constitui a principal
+lacuna. Os valores da seção 5 provêm da primeira execução posterior à correção de
+reprodutibilidade (D-44) e são reprodutíveis, o que é distinto de serem estáveis entre
+sementes: a bateria com repetição está pendente e, até lá, o trabalho reporta ponto sem
+intervalo.
+
+O trabalho reporta **um** resultado, não a trajetória que levou até ele. Execuções
+anteriores à série de dez competências correspondem a configurações defeituosas —
+grafo com chaves estrangeiras sem correspondência, série interrompida antes da
+competência final — e não constituem condições experimentais alternativas (D-39).
+Não são citadas.
 
 ---
 
@@ -33,9 +42,9 @@ a linha de inclusão pronta, comentada até que o arquivo exista.
 | 3 | Série de eventos de aquisição por transição | 3.4 | `notebook/00_analise_alvo` | pendente |
 | 4 | Cobertura de coordenada por competência | 3.4 | `notebook/00_analise_alvo` | pendente |
 | 5 | Curvas de precisão–revocação das cinco previsões | 5.2 | `models/*/previsoes/` | desbloqueada por D-35 |
-| 6 | MAP@10 por modelo, com intervalo entre execuções | 5.2 | `models/*/previsoes/` | pendente |
+| 6 | MAP@10 por previsão | 5.2 | `models/*/previsoes/` | pendente |
 | 7 | Recorte do grafo relacional em torno de um estabelecimento | 4.2 | `notebook/02_relacoes` | pendente |
-| 8 | Distribuição espacial dos estabelecimentos posicionáveis | 5.5 | `notebook/04_recorte_e_dados_externos` | pendente |
+| 8 | Distribuição espacial dos estabelecimentos posicionáveis | 5.4 | `notebook/04_recorte_e_dados_externos` | pendente |
 
 | # | Tabela | Seção | Situação |
 |---|---|---|---|
@@ -43,8 +52,7 @@ a linha de inclusão pronta, comentada até que o arquivo exista.
 | 2 | As três trilhas e o que cada uma isola | 4.2 | escrita |
 | 3 | Partição temporal | 4.3 | escrita |
 | 4 | Desempenho comparado das cinco previsões | 5.1 | escrita |
-| 5 | Comparação entre execuções sucessivas | 5.4 | escrita |
-| 8 | Matriz técnica × escopo | 5.3 | pendente de execução (D-36) |
+| 5 | Matriz técnica × escopo | 5.3 | pendente de execução (D-36) |
 | 6 | Hiperparâmetros e semente | 4.6 | pendente |
 | 7 | Modos de falha identificados e corrigidos | 4.7 | escrita |
 
@@ -55,8 +63,9 @@ a linha de inclusão pronta, comentada até que o arquivo exista.
 **Escassez de recursos em redes de saúde: a estrutura da rede acrescenta poder
 preditivo?**
 
-Título alternativo, mais aderente ao resultado obtido: *Estrutura relacional supera
-proximidade geográfica na predição de aquisição de equipamento médico no CNES*.
+Título alternativo, mais aderente ao resultado obtido: *A estrutura da rede informa
+onde, e não o quê: um resultado divergente entre métricas na predição de aquisição de
+equipamento médico no CNES*.
 
 **Autoria.** Pedro H. S. Prestes. Orientação: Alexandre C. B. Delbem e
 Eric K. Tokuda.
@@ -73,14 +82,18 @@ equipamento médico entre dois instantes anuais consecutivos, sobre dez competê
 do CNES (janeiro de 2017 a janeiro de 2026) no estado de São Paulo, totalizando
 146.679 estabelecimentos, 99 tipos de equipamento e 40.880 eventos de aquisição em
 nove transições, com prevalência de 0,047%. Três abordagens observam o mesmo rótulo
-sob informação estrutural distinta — ausente, relacional e geográfica —, submetidas
-à mesma partição temporal e avaliadas sobre o mesmo subconjunto de nós. A rede
-neural de grafos relacional alcança precisão média (AP) de 0,0106 e MAP@10 de 0,300,
-contra 0,0036 e 0,257 do modelo de gradient boosting sem informação estrutural,
-superando também a variante puramente geográfica (0,0049 e 0,274). A contribuição
-metodológica reside no desenho que torna a comparação interpretável: piso de
-desempenho verificável, viés de seleção quantificado e corte temporal que impede a
-presença do rótulo na estrutura observada pelo modelo.
+sob informação estrutural distinta — ausente, relacional e geográfica —, submetidas à
+mesma partição temporal e avaliadas sobre o mesmo subconjunto de nós. **O resultado é
+duplo e divergente.** Na ordenação global, a informação estrutural acrescenta poder
+preditivo: a rede neural de grafos relacional alcança precisão média (AP) de 0,0065 e
+AUC-ROC de 0,841, contra 0,0029 e 0,751 do modelo de gradient boosting sem informação
+estrutural. Na ordenação interna a cada estabelecimento, medida por MAP@10, a relação
+se inverte: uma previsão baseada exclusivamente na frequência histórica de aquisição de
+cada tipo de equipamento alcança 0,2725, contra 0,2533 da abordagem relacional. A
+estrutura da rede informa **onde** uma aquisição ocorrerá, e não **qual** equipamento
+será adquirido. A contribuição metodológica reside no desenho que torna a comparação
+interpretável: piso de desempenho verificável, viés de seleção quantificado e corte
+temporal que impede a presença do rótulo na estrutura observada pelo modelo.
 
 **Palavras-chave:** CNES; redes de saúde; aprendizado profundo relacional; redes
 neurais de grafos; predição de aquisição de recursos.
@@ -137,7 +150,7 @@ resultado a reportar como fato estabelecido. A decisão está registrada em D-02
 2. Medição, sobre dez anos de registro no estado de São Paulo, de que a estrutura
    relacional supera tanto o modelo tabular quanto a vizinhança geográfica.
 3. Catálogo de modos de falha metodológica identificados no percurso, com o efeito de
-   cada um sobre o número reportado (seção 4.7 e as 37 entradas de
+   cada um sobre o número reportado (seção 4.7 e as 44 entradas de
    [`03-decisoes.md`](03-decisoes.md)).
 
 ---
@@ -318,8 +331,8 @@ A partição opera por **transição**, nunca por linha, e nunca por sorteio.
 
 A divisão é derivada da série, e não configurada: a transição mais recente compõe o
 teste, as duas anteriores a validação, e as remanescentes o treino. Cada competência
-acrescentada desloca a janela em um ano, do que decorre que resultados de execuções
-distintas só são comparáveis sob a mesma série (D-29).
+acrescentada desloca a janela em um ano, do que decorre que a série de dez
+competências é parte da especificação do resultado, e não um parâmetro de execução.
 
 ### 4.4 Prevenção de vazamento
 
@@ -385,18 +398,26 @@ positivos, prevalência de 0,0553%. Somente a comparação pareada é legítima,
 abordagem 3 alcança apenas as unidades dotadas de coordenada, e a avaliação sobre
 populações distintas mediria diferença de amostra em lugar de diferença de estrutura.
 
-**Tabela 4 — Desempenho comparado das cinco previsões.**
+**Tabela 4 — Desempenho comparado das sete previsões.** Ver D-44.
 
 | Previsão | Abordagem | AP | AUC-ROC | MAP@10 |
 |---|---|---|---|---|
-| `gnn_relacional` | 2 | **0,01061** | **0,849** | **0,3000** |
-| `gnn_geografica` | 3 | 0,00490 | 0,816 | 0,2745 |
-| `gbdt_geral` | 1 | 0,00355 | 0,766 | 0,2567 |
-| `popularidade_item` | 1 | 0,00220 | 0,700 | 0,2714 |
-| `persistencia` | 1 | 0,00055 | 0,500 | 0,0324 |
+| `gnn_relacional` | 2 | **0,00650** | **0,841** | 0,2533 |
+| `gnn_geografica` | 3 | 0,00493 | 0,800 | 0,2665 |
+| `por_entidade` | 1 | 0,00335 | 0,737 | 0,1580 |
+| `gbdt_geral` | 1 | 0,00289 | 0,751 | 0,1910 |
+| `gbdt_ultimo_snapshot` | 1 | 0,00230 | 0,744 | 0,1859 |
+| `popularidade_item` | 1 | 0,00220 | 0,699 | **0,2725** |
+| `persistencia` | 1 | 0,00055 | 0,500 | 0,0333 |
 
-Custo computacional: 1.668 s de treino na abordagem 2, com melhor época em 99; 160 s
-na abordagem 3, com melhor época em 26. Consumo máximo de memória de 6,3 GB.
+Custo computacional: 12 min de treino na abordagem 2, com melhor época em 28 de 49;
+12 min na abordagem 3, com melhor época em 46. Execução completa em 1 h 12, com
+consumo máximo de 6,95 GB.
+
+Estes valores são os da primeira execução posterior à correção de reprodutibilidade
+descrita em 4.7. Execuções anteriores construíam a tabela de rótulos em ordem não
+determinística e produziram, para a mesma configuração, MAP@10 entre 0,189 e 0,300;
+nenhuma delas é citável.
 
 ### 5.2 Leitura das métricas
 
@@ -409,22 +430,35 @@ revocação, que é a faixa de interesse para uso operacional.
 
 <!-- ![MAP@10 por modelo](figuras/fig-06-map10-por-modelo.png) -->
 
-**Figura 6 — MAP@10 por previsão, com a variação observada entre execuções.**
-Contrapõe os valores da execução sob teste 2025 (D-26) e sob teste 2026 (D-32),
-evidenciando que as previsões sem informação estrutural permaneceram estáveis
-enquanto as duas abordagens estruturais se deslocaram.
+**Figura 6 — AP e MAP@10 por previsão, em painéis lado a lado.** Torna visível a
+inversão de ordenação entre as duas métricas: a abordagem relacional lidera o painel
+de AP e ocupa a terceira posição no de MAP@10. É a figura que sustenta a leitura 3.
 
-Três leituras decorrem da Tabela 4:
+Três leituras decorrem da Tabela 4, e a terceira é a mais importante do trabalho.
 
-1. **A estrutura acrescenta poder preditivo.** A abordagem relacional atinge 19,2
-   vezes a prevalência em AP, contra 6,4 vezes do gradient boosting tabular.
-2. **O ganho manifesta-se também na métrica de destaque.** MAP@10 de 0,300 contra
-   0,271 da previsão que considera exclusivamente a frequência de aquisição de cada
-   tipo de equipamento. Na execução anterior a relação era inversa.
-3. **A estrutura relacional supera a geográfica.** AP de 0,0106 contra 0,0049. Na
-   execução anterior as duas praticamente se igualavam em AUC, o que sustentava a
-   interpretação de que a proximidade física capturaria quase todo o sinal
-   estrutural; com o grafo relacional corrigido, essa interpretação não se sustenta.
+1. **A estrutura acrescenta poder preditivo de ordenação global.** A abordagem
+   relacional atinge 11,7 vezes a prevalência em AP, contra 5,2 vezes do gradient
+   boosting tabular — uma razão de 2,3 entre as duas. Em AUC-ROC, 0,841 contra 0,751.
+2. **A estrutura relacional supera a geográfica.** AP de 0,00650 contra 0,00493, AUC
+   de 0,841 contra 0,800. A hipótese de que a proximidade física capturaria quase todo
+   o sinal estrutural não se sustenta: o esquema relacional rende mais, ainda que ao
+   custo de igual tempo de treino.
+3. **As duas métricas discordam, e a discordância é o resultado.** Em MAP@10 a
+   ordenação se inverte: `popularidade_item` alcança 0,2725, a abordagem geográfica
+   0,2665 e a relacional 0,2533. Uma previsão que ignora inteiramente o
+   estabelecimento — baseada exclusivamente na frequência histórica de aquisição de
+   cada tipo de equipamento — ordena melhor **no interior** de cada unidade que ambas
+   as redes de grafos.
+
+As duas afirmações são compatíveis, pois as métricas medem dimensões distintas do
+mesmo escore: AP avalia a ordenação global e MAP@k a ordenação interna à entidade. A
+informação estrutural mostra-se útil para determinar **onde**, na rede, uma aquisição
+ocorrerá, e não para determinar **qual** equipamento uma unidade específica adquirirá.
+
+Este é o resultado que o trabalho reporta, e ele não é o esperado. A hipótese candidata
+para a discordância é que o componente de item do decodificador convirja mais
+lentamente que o componente de nó, sendo `popularidade_item` precisamente um modelo
+composto apenas do primeiro. A verificação é direta e está registrada em 6.1.
 
 ### 5.3 Matriz técnica × escopo
 
@@ -432,7 +466,7 @@ As limitações de hardware descritas na seção 7 foram levantadas em um segund
 executado em servidor de 440 GB com GPU (D-34). Como técnica e escopo deixam de estar
 amarrados, o trabalho passa a reportar quatro células em vez de um número:
 
-**Tabela 8 — Matriz técnica × escopo.** Pendente de execução; ver D-36.
+**Tabela 5 — Matriz técnica × escopo.** Pendente de execução; ver D-36.
 
 | | Escopo São Paulo | Escopo nacional |
 |---|---|---|
@@ -447,25 +481,7 @@ semente, e qualquer divergência aponta para o código novo em lugar do hardware
 A célula C responde diretamente à questão levantada em 7: quanto das limitações de
 memória custou em desempenho, medido sem trocar de amostra.
 
-### 5.4 Comparação entre execuções sucessivas
-
-**Tabela 5 — Comparação entre execuções.** Coluna esquerda: teste 2025, série de nove
-competências (D-26). Coluna direita: teste 2026, série de dez competências (D-32).
-
-| Previsão | AP (2025) | AP (2026) | MAP@10 (2025) | MAP@10 (2026) |
-|---|---|---|---|---|
-| `gnn_relacional` | 0,00478 | 0,01061 | 0,2133 | 0,3000 |
-| `gnn_geografica` | 0,00378 | 0,00490 | 0,2077 | 0,2745 |
-| `gbdt_geral` | 0,00280 | 0,00355 | 0,2520 | 0,2567 |
-| `popularidade_item` | 0,00215 | 0,00220 | 0,2957 | 0,2714 |
-| `persistencia` | 0,00051 | 0,00055 | 0,0354 | 0,0324 |
-
-As previsões sem informação estrutural apresentaram variação reduzida; as duas
-abordagens estruturais apresentaram variação substancial, com a relacional mais que
-dobrando em AP. A interpretação dessa diferença exige o experimento de ablação
-descrito em 6.1.
-
-### 5.5 Viés do subconjunto de avaliação
+### 5.4 Viés do subconjunto de avaliação
 
 <!-- ![Distribuição espacial dos posicionáveis](figuras/fig-08-distribuicao-espacial.png) -->
 
@@ -475,35 +491,25 @@ metropolitana. Auxilia a caracterizar a natureza não aleatória do subconjunto 
 qual a comparação pareada é conduzida.
 
 A prevalência eleva-se de 0,0478% no conjunto completo para 0,0553% no subconjunto
-pareado. O efeito é mais acentuado do que na execução anterior: os 6.309 positivos da
-transição de teste situam-se **integralmente** em estabelecimentos com coordenada
-plausível. Unidades que adquiriram equipamento entre 2025 e 2026 estão, sem exceção,
-georreferenciadas, o que torna a comparação não pareada enganosa por construção.
+pareado, e os 6.309 positivos da transição de teste situam-se **integralmente** em
+estabelecimentos com coordenada plausível. Unidades que adquiriram equipamento na
+transição de teste estão, sem exceção, georreferenciadas, o que torna a comparação
+não pareada enganosa por construção.
 
 ---
 
 ## 6. Discussão
 
-### 6.1 Experimento de ablação, pendente
+### 6.1 Questões a desenvolver
 
-Três alterações foram introduzidas entre as duas execuções comparadas na Tabela 5: a
-partição deslocou-se em um ano; o grafo relacional foi corrigido, com a remoção de 33
-declarações de chave estrangeira sem correspondência e a reconexão de uma tabela de
-815 mil linhas à raiz (D-28); e o treino avançou até a época 99, em lugar de
-interromper-se na 47.
-
-A estabilidade das previsões sem informação estrutural, contrastada com o
-deslocamento das duas abordagens estruturais, sugere que o efeito predominante é o da
-correção do grafo. A afirmação, entretanto, requer decomposição. O experimento é de
-baixo custo: executar o teste 2026 com as declarações antigas de chave estrangeira e
-o teste 2025 com o grafo corrigido.
-
-### 6.2 Questões a desenvolver
-
-- **Divergência e posterior convergência entre AP e MAP@10.** As duas métricas medem
-  dimensões distintas do mesmo escore — ordenação global contra ordenação no interior
-  do estabelecimento. A convergência tardia da componente de item é a explicação
-  candidata.
+- **Divergência entre AP e MAP@10, que é o resultado principal.** As duas métricas
+  medem dimensões distintas do mesmo escore — ordenação global contra ordenação no
+  interior do estabelecimento — e a abordagem relacional lidera a primeira e perde a
+  segunda. A explicação candidata é a convergência mais lenta do componente de item do
+  decodificador, sendo `popularidade_item` um modelo composto apenas desse componente.
+  **Verificação direta:** um escore que combine a saída relacional com a frequência de
+  item; se superar 0,2725 em MAP@10, a hipótese se sustenta e o componente de item está
+  subaproveitado. Se não superar, a explicação é outra.
 - **Superioridade do schema sobre a geografia.** Hipótese: o nó de categoria
   compartilhado conecta unidades distantes com perfil semelhante, o que a proximidade
   física não realiza por construção.
@@ -522,7 +528,7 @@ o teste 2025 com o grafo corrigido.
   atributos de nó derivam do mesmo corte, e o recorte contava 80.073 estabelecimentos
   em 2017 contra 146.679 na série completa, de modo que **45% dos nós ingressam com
   vetor de atributos vazio**. *Levantada no pipeline do servidor por um grafo por
-  transição; efeito a medir na célula C da Tabela 8.*
+  transição; efeito a medir na célula C da Tabela 5.*
 - **O grafo relacional é topologia sem atributo.** A projeção que viabiliza a
   montagem em 9 GB de memória retém duas colunas por tabela filha, de forma que 298
   das 368 colunas aprovadas nas tabelas de fato permanecem fora do grafo: as arestas
@@ -532,9 +538,13 @@ o teste 2025 com o grafo corrigido.
   federativas não foi verificada, e o resultado repousa sobre uma única transição de
   teste. *O recorte nacional entra nas células B e D.*
 - **As limitações acima são de hardware, não de método.** O trabalho as reporta como
-  tal, e a Tabela 8 existe para quantificar o que cada uma custou — em lugar de
+  tal, e a Tabela 5 existe para quantificar o que cada uma custou — em lugar de
   deixá-las como ressalva qualitativa.
-- **A inversão do resultado de MAP@10 não está decomposta.** Ver seção 6.1.
+- **A variância entre execuções ainda não está caracterizada.** A fonte dominante de
+  irreprodutibilidade foi identificada e corrigida (D-43), mas resta variação de
+  inicialização, que só a repetição por semente quantifica. Enquanto a bateria com
+  `SEMENTES=3` não for executada, o trabalho reporta ponto sem intervalo, e isso é
+  declarado.
 
 ---
 
@@ -548,18 +558,23 @@ decisões auditáveis.
 
 Trabalhos futuros, ordenados por razão entre valor esperado e custo:
 
-1. **Ablação da inversão observada**, que separa o efeito da partição do efeito da
-   correção estrutural.
-2. **Peso e atributo nas arestas, e atributos calculados até o fim da janela de
+1. **Peso e atributo nas arestas, e atributos calculados até o fim da janela de
    treino**, que restituem informação hoje descartada pela projeção mínima e pelo
    corte de vazamento, sem alteração de arquitetura.
-3. **Escore combinado entre a rede relacional e a popularidade do item**: superação
-   de 0,300 em MAP@10 indicaria que a componente de item permanece subaproveitada.
-4. **Grafo temporal com visibilidade por exemplo**, que elimina a defasagem de nove
+2. **Escore combinado entre a rede relacional e a popularidade do item**: é a
+   verificação direta da leitura 3 da seção 5.2. Superar 0,2725 em MAP@10 indicaria que
+   o componente de item permanece subaproveitado no decodificador; não superar indicaria
+   que a explicação da divergência entre métricas é outra.
+3. **Grafo temporal com visibilidade por exemplo**, que elimina a defasagem de nove
    anos imposta às abordagens estruturais.
-5. **População municipal do IBGE**, viabilizada pela ampliação do recorte ao estado.
-6. **Produção ambulatorial do SIA/SUS**, única fonte capaz de converter escassez
+4. **Produção ambulatorial do SIA/SUS**, única fonte capaz de converter escassez
    inferida em escassez com demanda observada, e a de maior custo.
+
+A integração de fontes externas ao CNES — da qual a população municipal do IBGE é o
+caso mais barato — constitui linha de continuação própria, e não etapa deste
+trabalho. O critério de admissão está escrito em
+[`04-dados-externos.md`](04-dados-externos.md); a avaliação de que nenhum papel
+previsto para a população municipal tem consumidor no desenho atual está em D-40.
 
 ---
 
@@ -570,9 +585,9 @@ A redigir em conjunto com a seção 2, cobrindo os cinco blocos ali especificado
 ## Pendências de redação
 
 - [ ] Seção 2 integral, com as referências correspondentes.
-- [ ] Ablação executada e seção 6.1 reescrita com o resultado.
+- [ ] **Bateria com `SEMENTES=3` executada, e a Tabela 4 refeita com intervalo em vez
+      de ponto.** Bloqueia a seção 5 (D-42).
 - [ ] Figuras 1 a 8 geradas e inseridas (remover o comentário da linha de inclusão).
 - [ ] Tabela 6, de hiperparâmetros e semente.
-- [ ] Revisão do resumo após a conclusão da ablação.
-- [ ] Execução das quatro células da Tabela 8 no servidor, e a leitura da decomposição.
+- [ ] Execução das quatro células da Tabela 5 no servidor, e a leitura da decomposição.
 - [ ] Definição do veículo de submissão e adequação ao formato exigido.

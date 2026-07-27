@@ -778,7 +778,12 @@ curto.
 
 ## D-24 — Primeiro resultado: as baselines no recorte estadual
 
-**Data:** 2026-07-25 · **Status:** medido
+**Data:** 2026-07-25 · **Status:** medido · **Valores do GBDT afetados por D-43.**
+O LightGBM treina na ordem em que as linhas chegam, e a ordem era não determinística,
+então os valores de `gbdt_geral` e `gbdt_ultimo_snapshot` variam entre execuções. As
+duas conclusões desta decisão sobrevivem: `persistencia` devolve AP exatamente igual à
+prevalência (não depende de ordem) e AP e MAP@10 ordenam as baselines de formas
+diferentes.
 
 Trilha 1 completa, conjunto de teste (transição 2025), 11.671.480 exemplos,
 4.994 positivos, prevalência 0,0428%.
@@ -886,7 +891,11 @@ as trilhas estruturais.
 
 ## D-26 — Resultado final: as três trilhas
 
-**Data:** 2026-07-25 · **Status:** medido
+**Data:** 2026-07-25 · **Status:** valores superados por D-44, **leitura confirmada
+por ele.** Os números desta decisão foram medidos sob o defeito de ordenação de D-43 e
+não são citáveis. Mas a leitura qualitativa — a GNN relacional vence AP e AUC e
+**perde** MAP@10 para `popularidade_item` — é a que se reproduz. Foi D-32 que a
+contradisse, e D-32 é que era artefato.
 
 Recorte estadual, transição de teste 2025. A tabela que vale é a **pareada**, sobre
 os 117.146 estabelecimentos posicionáveis, porque só ela compara as três trilhas
@@ -1259,7 +1268,12 @@ existir.
 
 ## D-32 — Resultado sob teste 2026: a GNN relacional passa a vencer as duas métricas
 
-**Data:** 2026-07-26 · **Status:** medido
+**Data:** 2026-07-26 · **Status:** SUPERADA POR D-44 — **os números abaixo não
+reproduzem.** A tabela de tarefa era construída em ordem não determinística e o
+minilote de treino é sorteado por índice, então a mesma semente selecionava linhas
+diferentes a cada processo (D-43). A inversão que esta decisão registra como resultado
+principal é artefato daquela ordenação. Mantida como registro histórico; não citar
+nenhum valor daqui.
 
 Reexecução das três trilhas sobre a série de dez snapshots (D-29), recorte
 estadual, transição de teste 2026. Tabela pareada, sobre os 127.868
@@ -1315,9 +1329,11 @@ Três mudanças entraram ao mesmo tempo:
 
 As três baselines quase não se moveram (a maior variação é `gbdt_geral`, de
 0,00280 para 0,00355) e as duas GNNs se moveram muito. Isso aponta para as
-mudanças estruturais, não para a troca de ano — mas **não é ablation**. A
-decomposição é barata e passa a ser o próximo passo: teste 2026 com as FKs antigas,
-e teste 2025 com o grafo corrigido.
+mudanças estruturais, não para a troca de ano — mas **não é ablation**.
+
+**A decomposição não será feita.** Ver D-39: as três mudanças não são tratamentos
+experimentais, são correções de defeito, e este resultado é o estado base do
+trabalho e não o segundo ponto de uma série.
 
 O item 3 enfraquece retroativamente o diagnóstico de D-26. Lá a hipótese era que o
 decoder não convergia no componente de item, com 47 épocas e 500 mil pares por
@@ -1773,3 +1789,484 @@ linhas de uma tabela que não é alvo.
 - **Deduplicar `rlEstabSipac` no `to_parquet`.** Regra por tabela na conversão,
   para apagar 8 a 59 linhas idênticas por snapshot numa tabela que não é alvo. O
   fato fica documentado em vez de corrigido.
+
+---
+
+## D-39 — A ablação de D-32 não será feita: aquele resultado é o estado base
+
+**Data:** 2026-07-27 · **Status:** aceita · **Encerra a pendência aberta em D-32**
+
+**Contexto.** D-32 registrou que três mudanças entraram ao mesmo tempo — a partição
+andou um ano (D-29), o grafo relacional teve 33 chaves estrangeiras falsas removidas
+e uma tabela de 815 mil linhas reconectada à raiz (D-28), e o treino avançou até a
+época 99 em vez de parar na 47 — e concluiu que a atribuição não era limpa. O passo
+seguinte proposto era decompor: rodar teste 2026 com as chaves antigas, e teste 2025
+com o grafo corrigido.
+
+**Decisão.** Esse experimento não será executado, e a pendência é encerrada.
+
+**Por quê.** Ablação separa o efeito de **tratamentos alternativos**. As três
+mudanças de D-32 não são alternativas: são correções de defeito.
+
+- A série de dez snapshots, terminando em 2026, é a série que o desenho amostral
+  sempre pediu (D-04). Parar em 2025 foi consequência de a competência de 2026 ainda
+  não ter sido convertida, não uma escolha de recorte temporal.
+- As 33 chaves estrangeiras de D-28 casavam com literalmente zero valores. Um grafo
+  com aresta que não liga nada não é uma condição experimental, é um grafo errado.
+- A parada na época 47 foi a paciência disparando cedo, não um hiperparâmetro
+  escolhido.
+
+Medir quanto cada defeito custava responderia "qual era o tamanho do erro", não
+"qual técnica é melhor". Nenhuma das três configurações antigas é uma alternativa
+que alguém proporia hoje, então a decomposição não informa nenhuma decisão futura.
+
+**Consequência.** D-32 deixa de ser o segundo ponto de uma série e passa a ser o
+**estado base** do trabalho: o resultado do pipeline como ele sempre deveria ter
+sido. Segue-se daí:
+
+1. Comparações com execuções anteriores saem do reporte. O esboço do artigo perde a
+   tabela de comparação entre execuções e a seção de ablação pendente — o trabalho
+   reporta um resultado, não a trajetória até ele.
+2. A célula A da matriz de D-34 continua sendo o controle, e o seu papel fica mais
+   simples: reproduzir D-32 no servidor. Ela nunca dependeu da ablação.
+3. As duas limitações que D-32 quantificou — 45% dos nós sem feature, 298 de 368
+   colunas fora do grafo — continuam abertas. Elas são desenho, não defeito, e é a
+   técnica completa do `hpc` que as endereça (D-34).
+
+**O que se perde, declarado.** Não se poderá afirmar qual das três correções produziu
+o salto da GNN relacional. A evidência disponível continua sendo indireta e fica
+registrada como tal em D-32: as baselines quase não se moveram e as duas GNNs se
+moveram muito, o que é consistente com a correção do grafo ser o efeito dominante.
+É uma leitura sugerida, não uma medição, e o texto não deve apresentá-la como causa.
+
+---
+
+## D-40 — População municipal do IBGE fica adiada: nenhum papel tem consumidor
+
+**Data:** 2026-07-27 · **Status:** adiada · **Revisa o item 2 de D-16**
+
+**Contexto.** D-16 ordenou as fontes externas por valor sobre risco e pôs a população
+municipal do IBGE em segundo lugar, condicionada à expansão do recorte. D-21 expandiu
+o recorte para o estado — 645 municípios em vez de um — e portanto desbloqueou
+formalmente o item. A pergunta passou a ser se ele entra agora.
+
+**Decisão.** Não entra. Fica adiada por inteiro, nos dois papéis que D-16 previa.
+
+**Como atributo, é o papel caro.** A população municipal é um agregado territorial.
+A trilha 1 tem que permanecer livre de informação relacional e espacial, porque a
+diferença entre ela e as trilhas 2 e 3 é a medida que o experimento existe para
+produzir. Se a população entra só nas GNNs, a comparação fica viciada e um ganho não
+é atribuível entre estrutura e população. Se entra em todas as trilhas, refaz todos
+os números de D-32.
+
+**Como denominador, o papel não tem onde acontecer.** Esta é a razão que decide, e
+ela não estava em D-16. AP, AUC e MAP@k são métricas de ordenação, adimensionais —
+população não normaliza nenhuma delas. Um número per capita só apareceria numa seção
+descritiva ou num notebook de explicabilidade dos modelos, e **nenhum dos dois existe
+nem está planejado**. Sem consumidor, o papel de denominador é decorativo.
+
+Há ainda um custo conceitual que D-16 não considerou: escassez per capita é uma
+**segunda definição operacional de escassez**, convivendo com a de
+[`02-metodologia.md`](02-metodologia.md), que é inferida da regularidade da rede e é a
+que o trabalho valida. Introduzir a segunda sem validá-la torna ambíguo o que o
+trabalho afirma medir. D-16 classificou o papel de denominador como risco baixo e
+valor alto; a reavaliação inverte as duas pontas.
+
+**Condição para reabrir.** Uma das duas, não ambas: (1) o trabalho ganhar uma camada
+descritiva ou de explicabilidade que consuma o número — aí volta como denominador, e
+só; ou (2) a matriz de D-34 estar fechada e o desenho passar a admitir covariável
+territorial em todas as trilhas simultaneamente — aí volta como atributo, com D-16
+item 2 reaberto explicitamente.
+
+**Limitação a declarar se voltar.** O Censo 2022 revisou a série de estimativas
+municipais. Usar 2017–2026 como série contínua embute uma descontinuidade em 2022
+que não corresponde a fenômeno real.
+
+**O que continua valendo de D-16.** O critério de seis itens, e a regra que o
+organiza: nenhuma fonte externa entra como rótulo. Esta decisão não afrouxa nada —
+aperta, ao retirar da fila a única fonte que estava liberada.
+
+---
+
+## D-41 — O viés de posicionabilidade é seletivo, atenua com o recorte e não alcança os rótulos
+
+**Data:** 2026-07-27 · **Status:** medido · **Fecha a obrigação 1 de D-17**
+
+**Contexto.** D-17 obrigou caracterizar quem fica de fora da trilha geográfica: se os
+não posicionáveis diferirem sistematicamente da rede, a trilha 3 não descreve a rede,
+descreve um recorte enviesado dela. A obrigação ficou aberta; D-22 corrigiu o nível de
+cobertura sem tocar na questão do viés. Medido agora em
+[`notebook/04_recorte_e_dados_externos`](../notebook/04_recorte_e_dados_externos.ipynb).
+
+### O viés existe, e mora na natureza jurídica
+
+Cobertura de coordenada cruzada com cinco atributos, teste de independência e V de
+Cramér como tamanho de efeito. Snapshot 202601.
+
+| Atributo | V (município) | V (estado) |
+|---|---|---|
+| `co_natureza_jur` | 0,393 | **0,349** |
+| `tp_pfpj` | 0,294 | **0,153** |
+| `tp_unidade` | 0,106 | 0,095 |
+| `tp_gestao` | 0,017 | 0,080 |
+| `nivel_dep` | 0,002 | 0,007 |
+
+O χ² é significativo em quase tudo — com dezenas de milhares de linhas isso é
+esperado e não informa. O que informa é o V: dois atributos carregam efeito
+substancial, três não carregam nenhum.
+
+A direção, por `tp_pfpj` no estado: pessoa jurídica 91,1% posicionável contra 80,4%
+da pessoa física. No município a mesma diferença é de 86,1% contra 59,5%.
+
+### O recorte estadual atenua o viés, e isso não estava previsto
+
+D-21 expandiu o recorte por outros motivos — mais eventos e variância territorial. O
+efeito colateral é que o viés de posicionabilidade **cai por metade** em `tp_pfpj`
+(0,294 para 0,153). A capital concentra consultório de pessoa física, que é
+justamente a categoria mal geocodificada; diluída no estado, a distorção encolhe.
+
+É argumento adicional a favor de D-21, medido depois da decisão e não antes.
+
+### O viés não alcança os rótulos
+
+Aquisições (`evento = 'inserida'`, tuplas distintas de unidade, equipamento e período)
+cruzadas com a posicionabilidade do snapshot 202601, recorte estadual:
+
+| Grupo | Estabelecimentos | Aquisições |
+|---|---|---|
+| Posicionável | 127.859 (87,3%) | 138.724 (**96,1%**) |
+| Não posicionável | 18.641 (12,7%) | 5.629 (3,9%) |
+
+E a distribuição por transição mostra que o resíduo é histórico, não estrutural:
+
+| Transição | Aquisições em não posicionável |
+|---|---|
+| 201801 | 2.515 |
+| 201901 | 2.072 |
+| 202001 | 971 |
+| 202101 a 202401 | entre 7 e 30 |
+| 202501 e 202601 | **0** |
+
+**Isto confirma, por caminho independente, o fato que D-32 registrou sem explicar:**
+todos os positivos da transição de teste estão em estabelecimentos posicionáveis. A
+causa é a cobertura de coordenada crescer ao longo da série (1,1% em 201701 para 87,3%
+em 202601, D-22) combinada a estabelecimento que adquire ser estabelecimento ativo.
+Em 2026 os ativos estão todos geocodificados; os 12,7% sem coordenada são
+majoritariamente cadastros inertes.
+
+### Taxa de aquisição por natureza, para não confundir os dois efeitos
+
+| `tp_pfpj` | Estabelecimentos | Aquisições | Por estabelecimento |
+|---|---|---|---|
+| Pessoa jurídica | 94.406 | 108.991 | 1,154 |
+| Pessoa física | 52.094 | 35.362 | 0,679 |
+
+Pessoa jurídica adquire 1,7 vezes mais, não ordens de grandeza mais. O 96,1% da
+tabela anterior não vem de pessoa física nunca adquirir — vem de a exclusão se
+concentrar em cadastro inerte, que não adquire por não estar operando.
+
+### O que isto autoriza e o que proíbe
+
+**Autoriza** afirmar que a comparação pareada custa pouco poder estatístico: o
+subconjunto excluído contém 3,9% das aquisições da série e nenhuma da transição de
+teste. A restrição da trilha 3, que parecia cara pelo número de nós, é barata pelo
+número de eventos.
+
+**Proíbe** afirmar que a trilha 3 descreve a rede assistencial sem qualificação. Ela
+descreve a parcela geocodificada, que sobre-representa pessoa jurídica em 10,7 pontos
+no estado e em 26,6 pontos no município. Onde o texto disser "não aleatório", deve
+dizer em quê.
+
+**Não sustenta** nenhuma mudança de código. A comparação pareada já restringe as três
+trilhas ao mesmo subconjunto, então o viés não contamina a comparação entre elas — ele
+limita a generalização, que é afirmação de texto e não de implementação.
+
+### O que fica aberto
+
+- **A caixa de plausibilidade não entra nesta medição.** O critério aqui é apenas
+  latitude e longitude não nulas e diferentes de zero; `src/ml/graph.py` aplica também
+  um filtro geográfico. A diferença é de cerca de um ponto percentual e não altera
+  nenhuma conclusão, mas os números não são intercambiáveis com os de D-22.
+- **As contagens de aquisição são da camada de mudanças, não da tabela de tarefa.** A
+  tarefa restringe o espaço de candidatos, então 40.880 (D-18) e os 144.353 desta
+  medição contam coisas diferentes e não devem ser comparados.
+- **`co_natureza_jur` continua com V alto no estado** (0,349) e não foi decomposto. As
+  categorias extremas são pequenas — natureza 2000 com 131 estabelecimentos e 0% de
+  cobertura, natureza 2313 com 119 e 16,8% — e podem estar dominando o efeito sem peso
+  prático. Decompor exigiria olhar categoria por categoria, e não muda nenhuma
+  afirmação atual.
+
+---
+
+## D-42 — D-32 não reproduz: a tabela de tarefa saía em ordem não determinística
+
+**Data:** 2026-07-27 · **Status:** medido · **Qualifica D-32 e reforça D-39**
+
+**Contexto.** O notebook `03_modelagem` foi reexecutado depois de duas correções: o
+grafo relacional passou a receber `ate_periodo` (a chamada anterior era recusada pela
+guarda de D-25, e a trilha 2 simplesmente não rodava) e a montagem do `Database`
+passou a usar a projeção mínima, como `tools/roda_experimento.py` já fazia.
+
+O objetivo era regenerar os outputs. O resultado foi outro.
+
+### Os dois números, lado a lado
+
+Tabela pareada, 127.868 posicionáveis, 11.411.933 exemplos, 6.309 positivos —
+partição, dados, recorte e código idênticos.
+
+| Modelo | AP (D-32) | AP (agora) | MAP@10 (D-32) | MAP@10 (agora) |
+|---|---|---|---|---|
+| `gnn_relacional` | 0,01061 | **0,00529** | **0,3000** | **0,1891** |
+| `gnn_geografica` | 0,00490 | 0,00471 | 0,2745 | 0,2719 |
+| `gbdt_geral` | 0,00355 | 0,00375 | 0,2567 | 0,2107 |
+| `popularidade_item` | 0,00220 | 0,00220 | 0,2714 | **0,2725** |
+| `persistencia` | 0,00055 | 0,00055 | 0,0324 | 0,0351 |
+
+### O que mudou, e o que não mudou
+
+**Não mudou:** `persistencia` devolve AP exatamente igual à prevalência e AUC
+exatamente 0,500, pela quarta execução consecutiva. `popularidade_item` e
+`gnn_geografica` praticamente não se moveram. A régua e as trilhas sem treino pesado
+são estáveis.
+
+**Mudou:** a GNN relacional. AP cai pela metade e MAP@10 cai 37%. A causa aparente
+está no treino: **melhor época 10, parada na 31**, contra melhor época 99 em D-32.
+Mesmos hiperparâmetros nominais.
+
+**A consequência que importa:** com MAP@10 de 0,189, `gnn_relacional` **perde** para
+`popularidade_item` (0,272) — um modelo que ignora o estabelecimento. Ou seja, a
+inversão que D-32 celebrou como resultado principal **não se sustenta nesta execução**.
+
+### O que isto obriga
+
+1. **Nenhuma afirmação sobre superioridade em MAP@10 pode entrar no artigo sem
+   repetição por semente.** A diferença entre 0,300 e 0,189 é maior que a diferença
+   entre qualquer par de modelos da tabela — o ruído domina o efeito que se quer medir.
+2. **O número de épocas até a parada é resultado, não detalhe de implementação.** Ele
+   varia de 31 a 119 e explica a métrica. Passa a ser reportado junto.
+3. **A vantagem em AP e AUC sobrevive.** `gnn_relacional` lidera AP (0,00529 contra
+   0,00375 do GBDT) e AUC (0,841 contra 0,763) nas duas execuções. É a afirmação que
+   o trabalho pode sustentar hoje.
+
+### Por que isto reforça D-39 em vez de contradizê-lo
+
+D-39 encerrou a ablação argumentando que as três mudanças de D-32 eram correções de
+defeito, não tratamentos alternativos. Nada aqui muda esse argumento — e a instabilidade
+agora medida mostra que a ablação **também não teria funcionado**: com uma banda de
+ruído desta ordem, decompor um salto de 0,213 para 0,300 em três parcelas produziria
+três números dentro do próprio ruído. A decisão de não gastar o experimento estava
+certa por uma razão a mais do que a registrada.
+
+### Pior que variância de semente: há não determinismo com semente fixa
+
+Medido depois, por acidente, ao validar o caminho novo da bateria. Duas execuções de
+`tools.roda_experimento --recorte 355030 --pular-gnn --excluir-pandemia --semente 43`
+— **mesma semente, mesmos argumentos, mesmos dados** — deram, para `gbdt_geral` no
+teste completo:
+
+| Execução | AP | MAP@10 |
+|---|---|---|
+| primeira | 0,00448 | 0,2851 |
+| segunda | 0,00356 | 0,1966 |
+
+31% de diferença em MAP@10 numa **baseline sem GNN**, com a semente fixada. O pacote
+salvo confere com o manifesto nas duas, então não é erro de gravação: as execuções
+divergiram de fato.
+
+A causa provável é paralelismo não determinístico no LightGBM, que a semente do
+projeto não controla. Não foi confirmado.
+
+Isto muda a leitura das seções acima: parte do que se atribuía a semente é
+irreprodutibilidade pura. `SEMENTES=n` na bateria continua necessário, mas mede a
+soma dos dois efeitos, não só o da inicialização.
+
+### Causa raiz, encontrada e corrigida
+
+A investigação está em D-43. Resumo: o `SELECT` final de
+`_candidatos_da_transicao` fazia um `LEFT JOIN` **sem `ORDER BY`**, e o hash join
+paralelo do DuckDB devolve linhas em ordem arbitrária, que muda de processo para
+processo. A composição da tabela era idêntica; a ordem, não. Como o treino sorteia o
+minilote por **índice**, a mesma semente sobre ordens diferentes seleciona linhas
+diferentes, e as trajetórias divergem da primeira época.
+
+Corrigido por `ORDER BY c."co_unidade", c."co_equipamento"`. Depois da correção, duas
+execuções em processos separados dão a mesma época escolhida e AP de validação que
+difere na oitava casa decimal.
+
+### O que fica aberto
+
+- **Os dois números desta decisão foram medidos sob o bug.** Nem 0,300 nem 0,189 é o
+  resultado do pipeline corrigido: cada um é uma ordem arbitrária das linhas. **A
+  tabela acima não deve ser citada como resultado** — só como evidência de que o
+  problema existia. O número reportável sai da primeira execução após D-43.
+- **Resta ruído de ponto flutuante entre threads**, de ordem 1e-7 no AP de validação.
+  Não muda a época escolhida nas execuções medidas, mas num treino longo com parada
+  antecipada pode empatar duas épocas vizinhas. `SEMENTES=3` continua sendo o mínimo
+  para reportar intervalo em vez de ponto.
+
+---
+
+## D-43 — A tabela de tarefa passa a ter ordem canônica
+
+**Data:** 2026-07-27 · **Status:** aceita, corrigida e verificada · **Causa raiz de D-42**
+
+**Sintoma.** Duas execuções do mesmo experimento, mesma semente, mesmos dados, davam
+resultados muito diferentes para a GNN relacional: melhor época 10 contra 99, MAP@10
+0,189 contra 0,300. As baselines sem treino também variavam — `gbdt_geral` deu AP
+0,00448 e 0,00356 com semente fixa.
+
+### A investigação, porque o caminho importa
+
+Duas hipóteses foram formuladas e **refutadas** antes da certa:
+
+1. **Índice de itens divergente.** O notebook usava `dropna().unique()` e o
+   orquestrador `cat.categories`. Medido: os dois dão os mesmos 99 itens, na mesma
+   ordem. Refutada.
+2. **Redução paralela em ponto flutuante.** Com `torch.set_num_threads(1)` os
+   processos continuaram divergindo, e divergindo já na **época 0** — antes de
+   qualquer acúmulo. Refutada. Um `Linear` isolado sobre entrada fixa é bit-idêntico
+   entre processos, o que fecha a porta.
+
+A instrumentação da fronteira resolveu. Hasheando cada estágio entre processos:
+
+| Estágio | Resultado |
+|---|---|
+| Features do nó | idêntico |
+| `edge_index` de cada relação | idêntico |
+| Tarefa: linhas e positivos | idêntico |
+| Inicialização do modelo (373 tensores) | idêntico |
+| Saída do encoder | idêntico |
+| **Logitos do decoder** | **divergem** |
+
+O decoder não tem aleatoriedade — `Embedding`, `cat`, `Linear`, `ReLU`, `Linear`. Com
+pesos e entrada idênticos ele não pode divergir. O que não estava instrumentado eram
+`u_tr` e `k_tr`, os tensores da própria tabela de tarefa. Hasheando a **ordem** das
+linhas: composição idêntica (11.223.326 linhas, 14.973 positivos), ordem diferente.
+
+### A causa
+
+O `SELECT` final de `_candidatos_da_transicao` não tinha `ORDER BY`. O hash join
+paralelo do DuckDB devolve as linhas na ordem em que as threads terminam, que varia
+entre processos.
+
+O treino sorteia o minilote por **índice**:
+
+```python
+lote = torch.randint(0, len(y_tr), (n_lote,), generator=gerador)
+```
+
+Índices idênticos sobre ordens diferentes selecionam **linhas diferentes**. A semente
+estava fixa e mesmo assim o minilote mudava. O LightGBM das baselines tem o mesmo
+problema, porque treina na ordem em que as linhas chegam.
+
+### A correção
+
+`ORDER BY c."co_unidade", c."co_equipamento"` na consulta. Ordem canônica, e
+canônica por chave do domínio — não por qualquer coisa derivada do plano de execução,
+que seria estável hoje e mudaria com uma versão nova do DuckDB.
+
+Verificado em dois processos separados, sobre o recorte da capital:
+
+| | Antes | Depois |
+|---|---|---|
+| Melhor época | 8 e 11 | **9 e 9** |
+| AP de validação | 0,00696 e 0,00603 | 0,00631981 e 0,00631977 |
+
+Coberto por `tests/test_tasks_ordem.py`, que falha se o `ORDER BY` for removido.
+
+### Consequência para os resultados já registrados
+
+**Todo número de GNN medido antes desta correção saiu de uma ordem arbitrária de
+linhas.** Isso inclui D-24, D-26 e D-32. Eles não estão errados no sentido de terem
+sido mal calculados — estão irreprodutíveis, que para o propósito de comparar
+configurações é equivalente.
+
+O primeiro resultado reportável do trabalho é a execução seguinte a esta decisão.
+D-32 deixa de ser o estado base que D-39 estabeleceu; o estado base passa a ser a
+bateria pós-correção. **D-39 não muda de conclusão** — a ablação continua não fazendo
+sentido, e agora por um motivo a mais: os números que ela decomporia eram ruído de
+ordenação.
+
+### Custo
+
+Um `ORDER BY` sobre até 14 milhões de linhas por transição. O DuckDB ordena com
+derrame para disco dentro do `memory_limit` já configurado, então o pico não muda de
+patamar. Medido no recorte da capital: sem diferença perceptível de tempo.
+
+---
+
+## D-44 — Resultado reprodutível: a estrutura vence em AP e AUC, e perde em MAP@10
+
+**Data:** 2026-07-27 · **Status:** medido · **Primeiro resultado posterior a D-43**
+· **Substitui D-32 como estado base** · **Restaura a leitura de D-26**
+
+Primeira execução das três trilhas com a ordem da tabela de tarefa canônica. Todos os
+números anteriores de GNN saíram de ordenação arbitrária e não são comparáveis a estes
+(D-43).
+
+Recorte estadual, série de dez snapshots, transição de teste 2026. Tabela pareada
+sobre os 127.868 estabelecimentos posicionáveis: 11.411.933 exemplos, 6.309 positivos,
+prevalência 0,0553%.
+
+| Modelo | AP | AUC-ROC | MAP@10 | Trilha |
+|---|---|---|---|---|
+| `gnn_relacional` | **0,00650** | **0,841** | 0,2533 | 2 |
+| `gnn_geografica` | 0,00493 | 0,800 | 0,2665 | 3 |
+| `por_entidade` | 0,00335 | 0,737 | 0,1580 | 1 |
+| `gbdt_geral` | 0,00289 | 0,751 | 0,1910 | 1 |
+| `gbdt_ultimo_snapshot` | 0,00230 | 0,744 | 0,1859 | 1 |
+| `popularidade_item` | 0,00220 | 0,699 | **0,2725** | 1 |
+| `persistencia` | 0,00055 | 0,500 | 0,0333 | 1 |
+
+Treino: 12m10 na trilha 2, melhor época 28 de 49, AP de validação 0,00557; 12m06 na
+trilha 3, melhor época 46. Grafo relacional com 25 tipos de nó e 48 relações;
+geográfico com 127.868 nós e 1.913.816 arestas. Execução completa em 1h12, pico de
+6,95 GB dentro de um cgroup de 7 GB.
+
+### A régua continua funcionando
+
+`persistencia` devolve AP exatamente igual à prevalência e AUC exatamente 0,500. É a
+quinta execução consecutiva em que isso se confirma (D-24, D-26, D-32, D-42).
+
+### As duas métricas discordam, e a discordância é o achado
+
+**Em AP e AUC a estrutura ganha com folga.** A GNN relacional alcança 2,3 vezes o AP
+do melhor modelo sem estrutura (0,00650 contra 0,00289) e 11,7 vezes a prevalência.
+AUC de 0,841 contra 0,751. Essa é a afirmação que o trabalho sustenta.
+
+**Em MAP@10 a estrutura perde.** `popularidade_item` lidera com 0,2725, seguido da
+geográfica com 0,2665 e da relacional com 0,2533. Um modelo que ignora completamente o
+estabelecimento — só a frequência histórica de aquisição de cada tipo de equipamento —
+ordena melhor **dentro** de cada estabelecimento que as duas redes de grafos.
+
+As duas coisas são compatíveis e medem dimensões diferentes do mesmo escore: AP mede
+ordenação global, MAP@k mede ordenação no interior da entidade. A estrutura ajuda a
+dizer **onde** no estado algo vai acontecer, e não ajuda a dizer **qual** equipamento
+uma unidade específica vai adquirir.
+
+### O que isto faz com D-32 e D-26
+
+D-32 registrou a inversão — a relacional vencendo as duas métricas — como o resultado
+principal do trabalho. **Aquela inversão era artefato da ordenação não determinística**
+(D-43) e não se reproduz. D-32 sai do papel de estado base, que D-39 lhe havia dado, e
+fica como registro histórico.
+
+D-26 havia registrado a derrota em MAP@10 como o resultado mais desconfortável do
+trabalho. **Ele volta a valer**, agora sob medição reprodutível, e é a leitura que o
+artigo precisa defender.
+
+Isso não altera D-39: a ablação continua sem sentido, e agora com um motivo a mais —
+o salto que ela decomporia não existia.
+
+### O que fica aberto
+
+- **Uma execução, uma semente.** O número é reprodutível, o que é diferente de ser
+  estável entre sementes. `SEMENTES=3` na bateria do servidor é o mínimo para reportar
+  intervalo.
+- **A explicação da discordância entre AP e MAP@10 é hipótese, não medição.** A
+  candidata é que o componente de item do decoder converge mais devagar que o
+  componente de nó, e `popularidade_item` é exatamente um modelo só de item. Testável
+  por escore combinado — se a soma dos dois superar 0,2725, a hipótese se sustenta.
+- **O treino pode não ter convergido.** Melhor época 28 de 49, com paciência de 20.
+  A trilha 3 parou na 46 de 66. Aumentar a paciência é barato e diria se o platô é
+  real.
