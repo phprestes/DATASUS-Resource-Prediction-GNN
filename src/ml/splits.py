@@ -59,6 +59,13 @@ class ParticaoTemporal:
 
     @property
     def conjuntos(self) -> dict[str, tuple[Transicao, ...]]:
+        """
+        Os três conjuntos indexados por nome.
+
+        Returns:
+            Mapa `{"treino": ..., "validacao": ..., "teste": ...}`, nessa ordem,
+            que é a ordem cronológica que `verificar_sem_vazamento` exige.
+        """
         return {"treino": self.treino, "validacao": self.validacao, "teste": self.teste}
 
     @property
@@ -68,6 +75,9 @@ class ParticaoTemporal:
 
         Qualquer feature agregada tem que ser calculada até aqui. Ler adiante
         deste ponto é vazamento, mesmo quando o rótulo vem do conjunto certo.
+
+        Returns:
+            Competência `YYYYMM` do destino da última transição de treino.
         """
         return self.treino[-1].destino
 
@@ -86,16 +96,37 @@ class ParticaoTemporal:
         conjuntos, ao custo de a estrutura ser mais antiga que os exemplos. Um
         grafo temporal, com arestas datadas e visibilidade por exemplo, é a
         solução correta e mais cara; ver D-25.
+
+        Returns:
+            Competência `YYYYMM` da origem da primeira transição de treino.
         """
         return self.treino[0].origem
 
     def conjunto_de(self, transicao: Transicao) -> str | None:
+        """
+        A qual conjunto uma transição pertence.
+
+        Args:
+            transicao: transição a localizar.
+
+        Returns:
+            `"treino"`, `"validacao"` ou `"teste"`; `None` se a transição não
+            está na partição — o que acontece com as de pandemia quando a
+            variante de controle as exclui.
+        """
         for nome, grupo in self.conjuntos.items():
             if transicao in grupo:
                 return nome
         return None
 
     def resumo(self) -> str:
+        """
+        Tabela de uma linha por conjunto, para conferência visual.
+
+        Returns:
+            Texto de várias linhas com nome do conjunto, número de transições e
+            os períodos de destino.
+        """
         linhas = [f"{'conjunto':10} {'n':>3}  transições (por período de destino)"]
         for nome, grupo in self.conjuntos.items():
             destinos = " ".join(t.destino for t in grupo)
@@ -123,6 +154,21 @@ def particionar(
     base já distorcida pelo choque — o que anularia o propósito da variante.
     É o experimento de controle que a metodologia exige para verificar se a
     conclusão sobrevive à covid-19.
+
+    Args:
+        periodos: competências `YYYYMM` disponíveis, em ordem crescente.
+        n_validacao: quantas transições, imediatamente antes do teste, formam a
+            validação.
+        n_teste: quantas transições mais recentes formam o teste.
+        excluir_pandemia: descarta transições que toquem `SNAPSHOTS_PANDEMIA` em
+            qualquer das duas pontas.
+
+    Returns:
+        A partição já verificada contra vazamento.
+
+    Raises:
+        ErroParticao: snapshots insuficientes para a divisão pedida, ou
+            `n_validacao`/`n_teste` menores que 1.
     """
     todas = transicoes(periodos)
     if excluir_pandemia:
@@ -166,6 +212,13 @@ def verificar_sem_vazamento(particao: ParticaoTemporal) -> None:
     Três coisas são checadas, e todas as três já falharam em alguma versão do
     projeto: sobreposição entre conjuntos, conjunto vazio, e ordem cronológica
     invertida entre treino, validação e teste.
+
+    Args:
+        particao: partição a verificar.
+
+    Raises:
+        ErroParticao: conjunto vazio, transição repetida dentro de um conjunto,
+            transição em dois conjuntos, ou conjuntos fora de ordem cronológica.
     """
     for nome, grupo in particao.conjuntos.items():
         if not grupo:
@@ -205,6 +258,14 @@ def verificar_features_sem_vazamento(
     snapshots contamina o treino com informação do futuro mesmo que os rótulos
     estejam corretamente divididos. Este é o vazamento mais fácil de cometer
     sem perceber, e o mais difícil de detectar olhando a métrica.
+
+    Args:
+        particao: partição de referência, de onde sai o limite.
+        periodos_usados: competências efetivamente lidas ao montar as features.
+
+    Raises:
+        ErroParticao: alguma competência usada é posterior a
+            `particao.fim_do_treino`.
     """
     limite = particao.fim_do_treino
     adiante = sorted(p for p in periodos_usados if p > limite)

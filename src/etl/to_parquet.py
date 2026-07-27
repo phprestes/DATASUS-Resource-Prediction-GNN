@@ -23,6 +23,25 @@ def clean_cnes_data(
     `tabelas` restringe a conversão a um subconjunto, para o caso de uma coluna
     recém-admitida em `01-selecao-tabelas.md` que só afeta uma tabela. Com
     `reprocess=False` (default), Parquet já existente é preservado.
+
+    A tipagem é onde o TRIM acontece: coluna de texto passa por
+    `NULLIF(TRIM(...), '')`, porque `CHAR(n)` do Oracle chega com espaço à direita
+    e o preenchimento muda quando o CNES alarga uma coluna. Sem isso toda
+    comparação entre snapshots quebra em silêncio (D-30). Data usa `try_strptime`
+    com `%d/%m/%Y` e anula valores antes de 1900, que são sentinela do CNES.
+
+    Args:
+        periods: competências a converter.
+        input_folder: camada 02, com um DuckDB por competência.
+        output_folder: camada 03, um diretório por competência.
+        reprocess: reconverte Parquet já existente.
+        tabelas: subconjunto a converter. `None` converte todas.
+
+    Returns:
+        Nada. O efeito é o Parquet em disco.
+
+    Raises:
+        ValueError: `tabelas` cita nome fora do escopo do documento de seleção.
     """
     if tabelas is not None:
         desconhecidas = [t for t in tabelas if t not in CNES_EXTRACT_COLUMNS]

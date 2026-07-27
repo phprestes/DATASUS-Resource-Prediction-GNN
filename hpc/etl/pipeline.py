@@ -46,10 +46,28 @@ DISCO_POR_PROCESSO_GB = 8.0
 
 
 def log(msg: str) -> None:
+    """
+    Imprime com hora, sem buffer.
+
+    Args:
+        msg: mensagem a registrar. Sem buffer porque a execução vive sob `screen`
+            e a saída precisa aparecer enquanto roda.
+    """
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def _parquets_de(periodo: str, primary: Path) -> int:
+    """
+    Quantos Parquet a competência já tem.
+
+    Args:
+        periodo: competência `YYYYMM`.
+        primary: raiz da camada primária do servidor.
+
+    Returns:
+        Contagem de arquivos, 0 se a pasta não existe. É o que torna o ETL
+        retomável, necessário porque o cluster mata processo acima de 168 h.
+    """
     pasta = primary / periodo
     return len(list(pasta.glob("*.parquet"))) if pasta.exists() else 0
 
@@ -63,9 +81,17 @@ def _uma_competencia(
     """
     Ingestão e conversão de uma competência. Roda em processo próprio.
 
-    Devolve `(periodo, n_parquet, observacao)`. Não levanta: uma competência que
-    falha não deve derrubar as outras oito, e o relatório final mostra quem ficou
-    de fora.
+    Args:
+        periodo: competência a processar.
+        reprocess: refaz mesmo se já houver Parquet.
+        manter_intermediario: não apaga o DuckDB no fim.
+        limite_memoria: teto do DuckDB deste processo. Sem teto, N processos
+            dimensionam o buffer pela RAM total e somam N vezes a máquina.
+
+    Returns:
+        Tupla `(periodo, n_parquet, observacao)`. **Não levanta**: uma competência
+        que falha não deve derrubar as outras, e o relatório final mostra quem
+        ficou de fora.
     """
     mapa = camadas(criar=True)
     temp = mapa["temp"] / periodo
@@ -118,6 +144,18 @@ def rodar(
     O download fica **em série** de propósito: é limitado pela rede e pelo
     servidor do DATASUS, e paralelizá-lo só multiplicaria timeouts. A ingestão,
     que é limitada por CPU e disco, é o que vai em paralelo.
+
+    Args:
+        periodos: competências a processar. `None` usa a série canônica.
+        pular_download: assume os ZIP já enviados por rsync. Necessário quando o
+            nó não tem internet, o que a wiki do IME não documenta.
+        processos: quantas competências em paralelo. `None` deriva dos núcleos e
+            do espaço em disco.
+        manter_intermediario: não apaga os DuckDB.
+        limite_memoria_por_processo: teto de cada DuckDB.
+
+    Returns:
+        Mapa `{competencia: numero_de_parquet}`.
     """
     periodos = periodos or list(PERIODOS_ANUAIS)
     mapa = camadas(criar=True)
@@ -181,6 +219,13 @@ def conferir_contra(outra_primaria: Path, periodos: list[str] | None = None) -> 
     É a verificação que separa "o ETL do servidor é mais rápido" de "o ETL do
     servidor produz outra coisa". Divergência aqui invalida a comparação entre as
     metades da matriz de D-34, então vale rodar uma vez depois do primeiro ETL.
+
+    Args:
+        outra_primaria: camada primária de referência, tipicamente a do notebook.
+        periodos: competências a comparar. `None` usa as que existem nas duas.
+
+    Returns:
+        0 quando tudo bate, 1 quando há divergência. É código de saída.
     """
     import duckdb
 
@@ -218,6 +263,12 @@ def conferir_contra(outra_primaria: Path, periodos: list[str] | None = None) -> 
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando do ETL do servidor.
+
+    Returns:
+        0 em sucesso, 1 se `--conferir-contra` achou divergência.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--periodos", nargs="*", help="competências YYYYMM")
     ap.add_argument("--pular-download", action="store_true",

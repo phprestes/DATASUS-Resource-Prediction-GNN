@@ -51,12 +51,27 @@ class Perfil:
 
     @property
     def vram_total_gb(self) -> float:
+        """
+        Returns:
+            VRAM somada de todas as GPUs, em GB. Medida em tempo de execução
+            porque a wiki do IME não documenta a VRAM das máquinas.
+        """
         return round(sum(g.vram_gb for g in self.gpus), 1)
 
     def como_dict(self) -> dict:
+        """
+        Returns:
+            Perfil como dicionário, para ir ao manifesto do pacote de modelo —
+            é a procedência que permite comparar execuções de máquinas diferentes.
+        """
         return asdict(self)
 
     def resumo(self) -> str:
+        """
+        Returns:
+            Texto de várias linhas com host, plataforma, RAM, CUDA e GPUs. É o
+            que `make hpc-ambiente` imprime.
+        """
         linhas = [
             f"host          {self.host}",
             f"plataforma    {self.plataforma}",
@@ -137,6 +152,15 @@ def exigir_cuda(permitir_cpu: bool = False) -> str:
     cair em CPU silenciosamente produziria uma execução de dias que ninguém
     pediu — e, pior, um número que pareceria comparável ao do servidor. Para o
     smoke test, `permitir_cpu=True` é explícito.
+
+    Args:
+        permitir_cpu: aceita CPU. O número produzido deixa de ser comparável.
+
+    Returns:
+        `"cuda"` quando há GPU, `"cpu"` quando `permitir_cpu` foi passado.
+
+    Raises:
+        RuntimeError: sem CUDA e sem `permitir_cpu`.
     """
     perfil = perfil_maquina()
     if perfil.cuda_disponivel:
@@ -172,6 +196,14 @@ def exigir_memoria(
 
     `permitir_maquina_pequena=True` existe para teste com dado sintético, onde o
     tamanho é conhecido e minúsculo — nunca para dado real.
+
+    Args:
+        minimo_gb: RAM mínima exigida. O pipeline usa 64 GB.
+        o_que: descrição da etapa, para compor a mensagem de erro.
+        permitir_maquina_pequena: ignora a guarda. Só para dado sintético.
+
+    Raises:
+        RuntimeError: a máquina tem menos RAM que o mínimo.
     """
     if permitir_maquina_pequena:
         return
@@ -196,6 +228,15 @@ def cabe_em_batch_completo(
     ativações de duas camadas (`nos × dim × 4` bytes, com folga para gradiente e
     otimizador). Serve para escolher entre batch completo e amostragem de
     vizinhança **antes** de estourar a memória, não para prever o consumo exato.
+
+    Args:
+        arestas: número de arestas do grafo.
+        nos: número de nós.
+        dim: dimensão das ativações.
+        folga: fração da VRAM considerada utilizável.
+
+    Returns:
+        `True` se a estimativa cabe. `False` também quando não há GPU alguma.
     """
     perfil = perfil_maquina()
     if not perfil.gpus:
@@ -208,7 +249,15 @@ def cabe_em_batch_completo(
 
 
 def semente_global(semente: int = 42) -> None:
-    """Fixa a semente de numpy e torch, incluindo CUDA."""
+    """
+    Fixa a semente global de numpy e torch, incluindo CUDA.
+
+    Não basta para reprodutibilidade: a ordem das linhas da tabela de tarefa
+    também precisa ser canônica, porque o minilote é sorteado por índice (D-43).
+
+    Args:
+        semente: valor a fixar.
+    """
     import numpy as np
 
     np.random.seed(semente)
@@ -223,7 +272,15 @@ def semente_global(semente: int = 42) -> None:
 
 
 def main() -> int:
-    """`python -m hpc.config.ambiente` imprime o perfil e sai."""
+    """
+    Entrada de linha de comando: imprime o perfil da máquina e sai.
+
+    Roda em qualquer máquina, inclusive sem GPU — é o alvo `hpc-ambiente`, feito
+    para conferir o ambiente antes de gastar horas nele.
+
+    Returns:
+        0 sempre. Código de saída do processo.
+    """
     perfil = perfil_maquina()
     print(perfil.resumo())
     print()

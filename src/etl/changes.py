@@ -55,7 +55,15 @@ RESUMO = CHANGES_FOLDER / NOME_RESUMO
 
 
 def caminho_resumo(pasta_saida: Path = CHANGES_FOLDER) -> Path:
-    """Onde vive o resumo de uma dada pasta de eventos."""
+    """
+    Caminho do resumo de uma pasta de eventos.
+
+    Args:
+        pasta_saida: pasta dos eventos de mudança.
+
+    Returns:
+        Caminho de `_resumo.parquet` dentro dela.
+    """
     return pasta_saida / NOME_RESUMO
 
 
@@ -67,11 +75,26 @@ class Transicao:
     destino: str
 
     def __str__(self) -> str:
+        """
+        Returns:
+            Representação `origem->destino`, usada em log e mensagem de erro.
+        """
         return f"{self.origem}->{self.destino}"
 
 
 def periodos_disponiveis(pasta: Path = PRIMARY_FOLDER) -> list[str]:
-    """Competências com Parquet na camada primária, em ordem cronológica."""
+    """
+    Competências convertidas, lidas do disco.
+
+    É a fonte da série real, contra `extract.PERIODOS_ANUAIS`, que é a série
+    pretendida. Nada no projeto conta snapshots à mão.
+
+    Args:
+        pasta: raiz da camada primária.
+
+    Returns:
+        Competências `YYYYMM` em ordem cronológica.
+    """
     return sorted(p.name for p in pasta.iterdir() if p.is_dir() and p.name.isdigit())
 
 
@@ -81,11 +104,29 @@ def transicoes(periodos: list[str]) -> list[Transicao]:
 
     Consecutivos na lista fornecida, não no calendário: se a série tem lacunas,
     a transição atravessa a lacuna e a interpretação disso é do chamador.
+
+    Args:
+        periodos: competências em ordem crescente.
+
+    Returns:
+        Transições, uma por par consecutivo. Dez snapshots dão nove transições.
     """
     return [Transicao(a, b) for a, b in zip(periodos, periodos[1:])]
 
 
 def _colunas_do_parquet(con: duckdb.DuckDBPyConnection, caminho: Path) -> list[str]:
+    """
+    Colunas de um Parquet, sem carregar linha alguma.
+
+    Args:
+        con: conexão DuckDB.
+        caminho: arquivo a inspecionar.
+
+    Returns:
+        Nomes das colunas na ordem do arquivo. Necessário porque três das 44
+        tabelas têm colunas que aparecem e desaparecem ao longo da série, e o
+        diff compara a interseção, não a lista de um lado (D-20, D-31).
+    """
     return [
         r[0]
         for r in con.execute(
@@ -102,6 +143,15 @@ def _chave_de(tabela: str, colunas: list[str]) -> tuple[list[str], bool]:
     inteira de colunas não-auditoria. Nesse modo não se distingue modificação de
     remoção-mais-inserção, e a taxa de mudança sai inflada — o chamador precisa
     saber disso, daí o segundo valor de retorno.
+
+    Args:
+        tabela: nome da tabela.
+        colunas: colunas presentes nos dois snapshots.
+
+    Returns:
+        Par `(chave, declarada)`. `declarada` é `False` quando caiu para a tupla
+        inteira, o que infla a taxa de mudança e precisa ser reportado (D-27).
+        Desde D-38 as 44 tabelas têm chave declarada.
     """
     declarada = [c for c in CNES_NATURAL_KEY.get(tabela, ()) if c in colunas]
     if declarada:
@@ -110,6 +160,16 @@ def _chave_de(tabela: str, colunas: list[str]) -> tuple[list[str], bool]:
 
 
 def _sql_lista(colunas: list[str], prefixo: str = "") -> str:
+    """
+    Lista de colunas citada para interpolar em SQL.
+
+    Args:
+        colunas: nomes a citar.
+        prefixo: alias de tabela a prefixar, se houver.
+
+    Returns:
+        Nomes entre aspas duplas, separados por vírgula.
+    """
     p = f"{prefixo}." if prefixo else ""
     return ", ".join(f'{p}"{c}"' for c in colunas)
 
@@ -133,6 +193,19 @@ def diff_tabela(
     Linhas inalteradas não são escritas: são a maioria absoluta e não constituem
     evento. A contagem delas volta no resumo, para que a taxa de mudança seja
     calculável.
+
+    Args:
+        con: conexão DuckDB.
+        tabela: nome da tabela a comparar.
+        transicao: par de competências.
+        pasta_entrada: raiz da camada primária.
+        pasta_saida: raiz dos eventos de mudança.
+        reprocess: refaz o diff mesmo se o Parquet de saída já existe.
+
+    Returns:
+        Contagem por classificação de evento, com as colunas usadas e se a chave
+        era declarada. `None` quando a tabela não existe em nenhum dos dois
+        snapshots.
     """
     origem = pasta_entrada / transicao.origem / f"{tabela}.parquet"
     destino = pasta_entrada / transicao.destino / f"{tabela}.parquet"
@@ -163,6 +236,17 @@ def diff_tabela(
     valores = [c for c in colunas if c not in chave and not AUDITORIA.match(c)]
 
     def fonte(caminho: Path, marca: str) -> str:
+        """
+        `SELECT` de um lado do diff, tolerando o arquivo não existir.
+
+        Args:
+            caminho: Parquet do snapshot.
+            marca: nome da coluna booleana que marca a presença deste lado.
+
+        Returns:
+            Consulta com a marca. Arquivo ausente vira um `SELECT` vazio com o
+            mesmo schema, para que o `FULL JOIN` continue válido.
+        """
         alvo = caminho if caminho.exists() else presente
         vazio = "" if caminho.exists() else " WHERE FALSE"
         return (
@@ -226,6 +310,16 @@ def diff_tabela(
 
 
 def _contar(con: duckdb.DuckDBPyConnection, caminho: Path) -> int:
+    """
+    Linhas de um Parquet.
+
+    Args:
+        con: conexão DuckDB.
+        caminho: arquivo a contar.
+
+    Returns:
+        Número de linhas, ou 0 se o arquivo não existe.
+    """
     if not caminho.exists():
         return 0
     return con.execute(
@@ -245,6 +339,18 @@ def detectar_mudancas(
 
     Acumula um resumo em `_resumo.parquet`, que é a base do cálculo de taxa de
     mudança usado para decidir a densidade de snapshots (D-10).
+
+    Args:
+        periodos: competências a considerar. `None` usa todas as convertidas.
+        tabelas: subconjunto de tabelas. `None` usa todas as de `FACT_TABLES`.
+        pasta_entrada: raiz da camada primária.
+        pasta_saida: raiz dos eventos de mudança.
+        reprocess: refaz tudo. **Necessário depois de mexer em chave natural ou
+            em tipagem** — ver D-27, D-30 e D-38.
+
+    Returns:
+        Uma entrada de resumo por par `(tabela, transição)` efetivamente
+        processado.
     """
     periodos = periodos or periodos_disponiveis(pasta_entrada)
     if len(periodos) < 2:
@@ -306,6 +412,15 @@ def taxa_de_mudanca(caminho: Path | None = None):
     A coluna `chave_declarada` importa na leitura. Onde ela é falsa, a tabela não
     tem chave natural declarada, cada modificação conta como uma remoção mais
     uma inserção, e a taxa está superestimada.
+
+    Args:
+        caminho: resumo a ler. `None` usa o default da camada de features.
+
+    Returns:
+        DataFrame com tabela, transição, contagens, `taxa_mudanca` e
+        `chave_declarada`. No alvo a taxa fica entre 0,079 e 0,110 por ano, sem
+        pico de pandemia — taxa perto de 1,0 é sinal de chave ou padding errado,
+        não de dado (D-27, D-30).
     """
     import pandas as pd
 
@@ -326,6 +441,12 @@ def taxa_de_mudanca(caminho: Path | None = None):
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando do estágio de eventos de mudança.
+
+    Returns:
+        0 em sucesso. Código de saída do processo.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tabelas", nargs="*", help="subconjunto de tabelas")
     ap.add_argument("--periodos", nargs="*", help="subconjunto de competências")

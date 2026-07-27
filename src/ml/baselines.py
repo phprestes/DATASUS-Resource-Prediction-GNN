@@ -68,6 +68,10 @@ class Previsao:
         Materializa o vetor de strings, então só chame quando de fato precisar
         dos identificadores — para inspecionar resultados, não para calcular
         métricas.
+
+        Returns:
+            Vetor de `co_unidade` como string, um por exemplo. Com dezenas de
+            milhões de linhas isso passa de um gigabyte (D-23).
         """
         if self.rotulos_entidade is None:
             return self.entidades
@@ -80,6 +84,13 @@ class Previsao:
         Existe para a comparação pareada entre trilhas exigida por D-15: ela
         precisa restringir todas as trilhas ao mesmo subconjunto de nós, e
         fazê-lo sem reconstruir o vetor de strings.
+
+        Args:
+            aceitos: `co_unidade` que devem passar pelo filtro.
+
+        Returns:
+            Máscara booleana do tamanho de `entidades`, `True` onde a entidade
+            está em `aceitos`.
         """
         if self.rotulos_entidade is None:
             return np.isin(self.entidades, list(aceitos))
@@ -94,6 +105,14 @@ def _entidades_de(tarefa: TabelaTarefa, mascara) -> tuple[np.ndarray, np.ndarray
     Códigos de entidade de um recorte, com o índice para traduzi-los de volta.
 
     Mantém a codificação categórica da tabela em vez de materializar strings.
+
+    Args:
+        tarefa: tabela de rótulos de onde sai a coluna de entidade.
+        mascara: seletor de linhas, no formato aceito por `DataFrame.loc`.
+
+    Returns:
+        Par `(codigos, rotulos)`. `codigos` são inteiros; `rotulos` traduz código
+        para `co_unidade`, ou `None` quando a coluna já era categórica sem índice.
     """
     serie = tarefa.df.loc[mascara, tarefa.col_entidade]
     if isinstance(serie.dtype, pd.CategoricalDtype):
@@ -108,6 +127,14 @@ def _validar_particao(tarefa: TabelaTarefa, particao: ParticaoTemporal) -> None:
 
     Sem esta checagem, treinar com uma partição e avaliar com outra passaria em
     silêncio e produziria um número sem significado.
+
+    Args:
+        tarefa: tabela de rótulos a conferir.
+        particao: partição que se espera ter gerado a tabela.
+
+    Raises:
+        ErroBaseline: os períodos de destino da tabela não correspondem aos da
+            partição.
     """
     rotulos = set(tarefa.df[COL_CONJUNTO].unique())
     esperados = set(particao.conjuntos)
@@ -141,6 +168,15 @@ def persistencia(tarefa: TabelaTarefa, conjunto: str = "teste") -> Previsao:
     exatamente a prevalência, e a AUC-ROC é 0,5. Não é um modelo competitivo — é
     a régua que diz quanto do resultado de qualquer outro modelo é informação e
     quanto é o desbalanceamento da classe.
+
+    Args:
+        tarefa: tabela de rótulos.
+        conjunto: conjunto a prever.
+
+    Returns:
+        `Previsao` com escore constante zero. O AP resultante é exatamente a
+        prevalência e a AUC exatamente 0,500; qualquer desvio denuncia erro no
+        arcabouço de avaliação e não no modelo (D-24).
     """
     mascara = tarefa.df[COL_CONJUNTO] == conjunto
     codigos, rotulos = _entidades_de(tarefa, mascara)
@@ -168,6 +204,19 @@ def popularidade_item(
 
     A taxa é estimada **apenas no treino**, com suavização de Laplace para não
     atribuir escore zero a item que nunca foi adquirido na janela de treino.
+
+    Args:
+        tarefa: tabela de rótulos, que precisa ter coluna de item.
+        particao: partição temporal, usada para localizar o treino.
+        conjunto: conjunto a prever.
+
+    Returns:
+        `Previsao` cujo escore é a taxa histórica de aquisição do tipo de item,
+        constante dentro de cada item. É a baseline que **lidera MAP@10** (D-44),
+        e vence as duas GNNs nessa métrica.
+
+    Raises:
+        ErroBaseline: a tarefa não tem coluna de item.
     """
     _validar_particao(tarefa, particao)
     if tarefa.col_item is None:
@@ -215,6 +264,17 @@ def montar_features(
     Não há agregado sobre a vizinhança nem contagem derivada de outras tabelas:
     incluí-los transformaria esta trilha numa versão pobre da trilha 2 e apagaria
     a diferença que o experimento quer medir.
+
+    Args:
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        conjunto: conjunto cujas features montar.
+
+    Returns:
+        Par `(X, y)` com as features codificadas e os rótulos. As features são
+        deliberadamente pobres — código de entidade, período e item — porque a
+        trilha 1 tem de ficar livre de informação relacional e espacial, senão
+        apaga a diferença que o experimento mede.
     """
     colunas = [tarefa.col_entidade, "periodo_destino"]
     if tarefa.col_item:
@@ -247,6 +307,14 @@ def _codificar(
     gigabytes de pico e foi o que estourou a memória. Aqui as categorias do
     treino viram um índice, e a avaliação é mapeada contra ele coluna a coluna,
     em `float32` — metade da memória do `float64` que o sklearn usaria.
+
+    Args:
+        serie: coluna a codificar.
+        categorias: vocabulário de referência. `None` deriva da própria série.
+
+    Returns:
+        Par `(codigos, categorias)`. Valor fora do vocabulário recebe -1, que o
+        LightGBM trata como categoria própria.
     """
     colunas = list(treino.columns)
     x_treino = np.empty((len(treino), len(colunas)), dtype=np.float32)
@@ -287,6 +355,18 @@ def gbdt(
     conjunto de treino. A comparação entre as duas variantes responde se a série
     histórica acrescenta algo ou se o estado presente basta — pergunta que o
     cronograma original fazia e que nunca foi respondida.
+
+    Args:
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        conjunto: conjunto a prever.
+        so_ultimo_snapshot: treina apenas na transição mais recente do treino,
+            em vez de em todas.
+
+    Returns:
+        `Previsao` do gradient boosting. É o melhor modelo sem estrutura em AP
+        (0,00289 em D-44), e o número que a trilha 2 tem de superar para que a
+        estrutura signifique algo.
     """
     _validar_particao(tarefa, particao)
     features = features if features is not None else montar_features(tarefa)
@@ -348,6 +428,17 @@ def por_entidade(
     caem para a previsão do modelo geral — treinar num punhado de linhas de uma
     classe só produziria um modelo degenerado, não um resultado sobre
     heterogeneidade.
+
+    Args:
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        conjunto: conjunto a prever.
+        minimo_exemplos: mínimo de exemplos de treino para uma entidade ganhar
+            modelo próprio. Abaixo disso ela cai no modelo global.
+
+    Returns:
+        `Previsao` com um modelo por entidade suficientemente observada. No
+        estado, 6.605 de 136.561 entidades passam do mínimo.
     """
     _validar_particao(tarefa, particao)
     features = features if features is not None else montar_features(tarefa)
@@ -370,6 +461,17 @@ def por_entidade(
     # varredura do vetor inteiro por entidade: com 136 mil estabelecimentos e
     # dezenas de milhões de linhas, isso é da ordem de 10^12 comparações.
     def agrupar(indices: np.ndarray) -> dict[int, np.ndarray]:
+        """
+        Agrupa posições de linha por entidade, sem construir um DataFrame.
+
+        Args:
+            indices: posições de linha a agrupar.
+
+        Returns:
+            Mapa `{codigo_da_entidade: posicoes}`. Uma ordenação estável em vez
+            de `groupby`: com milhões de linhas o DataFrame intermediário custa
+            mais que o resultado.
+        """
         ordem = indices[np.argsort(entidades[indices], kind="stable")]
         chaves = entidades[ordem]
         cortes = np.flatnonzero(np.diff(chaves)) + 1
@@ -422,6 +524,16 @@ def rodar_todas(
     Existe para que a regra de reporte de D-11 seja o caminho de menor esforço:
     a saída daqui alimenta `src.ml.metrics.tabela_de_resultados` diretamente, com as
     baselines já ao lado de qualquer GNN que se queira acrescentar.
+
+    Args:
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        conjunto: conjunto a prever.
+
+    Returns:
+        Mapa `{nome: Previsao}` com as cinco baselines. Passar todas de uma vez a
+        `tabela_de_resultados` é o que torna mecânica a regra de D-11: nenhuma
+        métrica de GNN é reportada sem o piso ao lado.
     """
     previsoes = [
         persistencia(tarefa, conjunto),

@@ -44,10 +44,30 @@ MARGEM_DISCO_GB = 6.0
 
 
 def espaco_livre_gb(caminho: Path) -> float:
+    """
+    Espaço livre no sistema de arquivos que contém o caminho.
+
+    Args:
+        caminho: qualquer caminho existente no volume.
+
+    Returns:
+        Gigabytes livres. Cada competência precisa de ~13 GB entre ZIP, CSV
+        descompactado e DuckDB intermediário.
+    """
     return shutil.disk_usage(caminho).free / 1024**3
 
 
 def _parquets_de(periodo: str) -> int:
+    """
+    Quantos Parquet a competência já tem na camada primária.
+
+    Args:
+        periodo: competência `YYYYMM`.
+
+    Returns:
+        Contagem de arquivos, 0 se a pasta não existe. É o que decide se a
+        competência é pulada, o que torna o ETL retomável.
+    """
     pasta = PRIMARY_FOLDER / periodo
     return len(list(pasta.glob("*.parquet"))) if pasta.exists() else 0
 
@@ -61,9 +81,19 @@ def rodar(
     """
     Roda o ETL até a camada primária, uma competência por vez.
 
-    Devolve {competência: número de Parquet gerados}. Uma competência que já
-    tenha Parquet é pulada quando `reprocess=False`, o que torna a execução
-    retomável — importante porque a série inteira leva bastante tempo.
+    Uma competência por vez de propósito: o DuckDB intermediário chega a 4 GB, e
+    processar a série toda antes de converter exigiria dezenas de gigabytes
+    simultâneos.
+
+    Args:
+        periodos: competências a processar. `None` usa `PERIODOS_ANUAIS`.
+        pular_download: assume que os ZIP já estão na camada 01.
+        manter_intermediario: não apaga o DuckDB ao fim de cada competência.
+        reprocess: refaz mesmo o que já está pronto.
+
+    Returns:
+        Mapa `{competencia: numero_de_parquet}`. Competência já convertida é
+        pulada quando `reprocess=False`, o que torna a execução retomável.
     """
     periodos = periodos or PERIODOS_ANUAIS
     PRIMARY_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -125,6 +155,12 @@ def rodar(
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando do ETL orquestrado.
+
+    Returns:
+        0 em sucesso. Código de saída do processo.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--periodos", nargs="*", help="competências YYYYMM")
     ap.add_argument("--pular-download", action="store_true")

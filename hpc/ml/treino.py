@@ -55,6 +55,12 @@ class BaseGNNComPeso(torch.nn.Module):
     """
 
     def __init__(self, oculto: int, saida: int, dropout: float = 0.15):
+        """
+        Args:
+            oculto: dimensão das duas camadas `GraphConv`.
+            saida: dimensão do embedding de saída.
+            dropout: taxa aplicada depois de cada convolução, só em treino.
+        """
         super().__init__()
         self.conv1 = GraphConv((-1, -1), oculto, aggr="mean")
         self.norm1 = torch.nn.LayerNorm(oculto)
@@ -64,6 +70,15 @@ class BaseGNNComPeso(torch.nn.Module):
         self.dropout = dropout
 
     def forward(self, x, edge_index, edge_weight=None):
+        """
+        Args:
+            x: features de nó.
+            edge_index: arestas em formato `(2, E)`.
+            edge_weight: peso escalar por aresta. `None` trata como não pesado.
+
+        Returns:
+            Embedding por nó.
+        """
         x = self.norm1(self.conv1(x, edge_index, edge_weight)).relu()
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.norm2(self.conv2(x, edge_index, edge_weight)).relu()
@@ -75,6 +90,12 @@ class EncoderTemporal(torch.nn.Module):
     """Projeção por tipo de nó mais a GNN heterogênea, com peso de aresta."""
 
     def __init__(self, metadata, oculto: int, saida: int):
+        """
+        Args:
+            metadata: par `(tipos_de_no, tipos_de_aresta)`.
+            oculto: dimensão da projeção e das convoluções.
+            saida: dimensão do embedding de saída.
+        """
         super().__init__()
         self.lin_dict = torch.nn.ModuleDict(
             {tipo: Linear(-1, oculto) for tipo in metadata[0]}
@@ -82,6 +103,16 @@ class EncoderTemporal(torch.nn.Module):
         self.gnn = to_hetero(BaseGNNComPeso(oculto, saida), metadata, aggr="mean")
 
     def forward(self, x_dict, edge_index_dict, edge_weight_dict=None):
+        """
+        Args:
+            x_dict: features por tipo de nó.
+            edge_index_dict: arestas por tipo de relação.
+            edge_weight_dict: peso por relação. `None` no modo compatível, em que
+                a aresta não tem peso.
+
+        Returns:
+            Mapa `{tipo_de_no: embedding}`.
+        """
         projetado = {tipo: self.lin_dict[tipo](x).relu() for tipo, x in x_dict.items()}
         if edge_weight_dict is None:
             return self.gnn(projetado, edge_index_dict)
@@ -89,6 +120,16 @@ class EncoderTemporal(torch.nn.Module):
 
 
 def _pesos_do_grafo(grafo: HeteroData) -> dict | None:
+    """
+    Extrai o peso de aresta de cada relação que tiver.
+
+    Args:
+        grafo: grafo de uma transição.
+
+    Returns:
+        Mapa `{relacao: edge_weight}`, ou `None` quando nenhuma relação tem peso —
+        que é o caso do modo compatível.
+    """
     pesos = {
         relacao: grafo[relacao].edge_weight
         for relacao in grafo.edge_types
@@ -98,6 +139,16 @@ def _pesos_do_grafo(grafo: HeteroData) -> dict | None:
 
 
 def _codificar(modelo: ModeloAquisicao, grafo: HeteroData) -> torch.Tensor:
+    """
+    Roda o encoder num grafo e devolve o embedding dos estabelecimentos.
+
+    Args:
+        modelo: modelo com o encoder a executar.
+        grafo: grafo da transição em questão.
+
+    Returns:
+        Embedding do tipo de nó raiz.
+    """
     saida = modelo.encoder(
         grafo.x_dict, grafo.edge_index_dict, _pesos_do_grafo(grafo)
     )
@@ -115,6 +166,15 @@ def _por_transicao(
 
     A fatia por transição é o que torna o grafo temporal possível: cada par é
     pontuado sob a estrutura do instante em que a pergunta foi feita.
+
+    Args:
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        indice: mapeamento de entidade e item para posição de tensor.
+        conjunto: `"treino"`, `"validacao"` ou `"teste"`.
+
+    Returns:
+        Uma tupla `(transicao, u, k, y, df)` por transição do conjunto.
     """
     fatias = []
     df_conjunto = tarefa.df[tarefa.df[COL_CONJUNTO] == conjunto]
@@ -150,7 +210,19 @@ def _pontuar(
     dispositivo: str,
     bloco: int = 4_000_000,
 ) -> np.ndarray:
-    """Pontua em blocos. O bloco é maior que no notebook porque há VRAM para isso."""
+    """
+    Pontua pares em blocos.
+
+    Args:
+        modelo: modelo treinado; só o decoder é usado.
+        z: embedding dos nós, já calculado.
+        u: índice de unidade de cada par.
+        k: índice de item de cada par.
+        bloco: pares por bloco. Maior que no notebook porque há VRAM para isso.
+
+    Returns:
+        Vetor `float32` de logitos, na ordem de `u`.
+    """
     saidas = []
     with torch.no_grad():
         for inicio in range(0, len(u), bloco):
@@ -190,6 +262,26 @@ def treinar(
 
     `checkpoint_em` grava estado a cada época. Sem escalonador para reenfileirar,
     é o que permite retomar uma execução morta pelo corte de 168 h.
+
+    Args:
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        grafos: um grafo por transição, em CPU.
+        indice: índice de nós e itens, na ordem do grafo.
+        dispositivo: `"cuda"` ou `"cpu"`.
+        epocas: teto de épocas.
+        paciencia: épocas sem melhora antes de parar.
+        passos_por_epoca: passos de gradiente **por transição de treino**.
+        lote: pares por passo.
+        validar_cada: valida a cada `k` épocas.
+        amp: usa bf16 com autocast quando a GPU suporta.
+        checkpoint_em: onde gravar estado por época. `None` desliga.
+        verboso: imprime progresso.
+
+    Returns:
+        Par `(modelo, curva)`. O modelo carrega os pesos da melhor época de
+        validação. `curva` traz melhor época, AP de validação, passos por época,
+        se os grafos couberam na GPU e se AMP foi usado.
     """
     torch.manual_seed(SEMENTE)
     gerador = torch.Generator().manual_seed(SEMENTE)
@@ -346,6 +438,19 @@ def prever(
     Devolve `Previsao` para que `src.ml.metrics` e `src.ml.artefatos` recebam o
     mesmo tipo dos dois pipelines — é o que mantém as células da matriz
     comparáveis e o pacote de modelo legível pelo mesmo código (D-35).
+
+    Args:
+        modelo: modelo treinado.
+        tarefa: tabela de rótulos.
+        particao: partição temporal.
+        grafos: um grafo por transição.
+        indice: índice de nós e itens, na ordem do grafo.
+        conjunto: conjunto a pontuar. Pontuado por completo, nunca amostrado.
+        nome: rótulo que aparece na tabela de resultados.
+        dispositivo: `"cuda"` ou `"cpu"`.
+
+    Returns:
+        `Previsao` com rótulos, escores e entidades alinhados.
     """
     modelo.eval()
     escores, rotulos, entidades = [], [], []

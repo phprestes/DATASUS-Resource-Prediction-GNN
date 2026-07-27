@@ -69,8 +69,17 @@ def filtro_recorte_sql(recorte: str | None, coluna: str = COL_MUNICIPIO) -> str:
     `'35'` é o estado de São Paulo, `'355030'` é o município da capital, `None` é
     o país. Não há caso especial — o município é apenas o prefixo completo.
 
-    Devolve `'1 = 1'` para recorte nulo, para que a cláusula possa ser
-    interpolada sem ramificar no chamador.
+    Args:
+        recorte: prefixo de código IBGE, ou `None` para o país inteiro.
+        coluna: coluna a filtrar. O default é `co_municipio_gestor`.
+
+    Returns:
+        Cláusula pronta para interpolar num `WHERE`. Recorte nulo devolve
+        `'1 = 1'`, para que o chamador não precise ramificar.
+
+    Raises:
+        ValueError: o recorte não é numérico, o que quase sempre é um nome de
+            município passado por engano.
     """
     if recorte is None:
         return "1 = 1"
@@ -87,6 +96,17 @@ def filtro_recorte_arrow(recorte: str | None):
 
     Existe separada porque o filtro da tabela raiz é empurrado para dentro do
     scan Parquet, e ali a linguagem é a de expressões do pyarrow, não SQL.
+
+    Args:
+        recorte: prefixo de código IBGE, ou `None` para o país inteiro.
+
+    Returns:
+        Expressão pyarrow, ou `None` para recorte nulo — que é o que o
+        `filters=` do scan espera para "sem filtro". Prefixo de 6 dígitos ou mais
+        usa igualdade em vez de `starts_with`, porque aí já é o código completo.
+
+    Raises:
+        ValueError: o recorte não é numérico.
     """
     if recorte is None:
         return None
@@ -106,7 +126,17 @@ def data_do_periodo(periodo: str) -> pd.Timestamp:
 
     O ZIP de competência 202501 é o estado do banco em janeiro de 2025, então o
     instante do snapshot é 2025-01-01. Exato e uniforme para todas as linhas do
-    arquivo, ao contrário da coluna de atualização.
+    arquivo, ao contrário da coluna de atualização, que é censurada à direita
+    (D-08).
+
+    Args:
+        periodo: competência no formato `YYYYMM`.
+
+    Returns:
+        Primeiro dia do mês da competência.
+
+    Raises:
+        ValueError: o formato não é `YYYYMM`.
     """
     if len(periodo) != 6 or not periodo.isdigit():
         raise ValueError(f"competência deve ser YYYYMM; recebido {periodo!r}")
@@ -124,6 +154,12 @@ def _marcos_da_particao(pasta: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
 
     Importado dentro da função porque `src.ml.splits` importa `src.etl.changes`, que
     importa este módulo indiretamente pela camada de caminhos.
+
+    Args:
+        pasta: raiz da camada primária, de onde a série é lida.
+
+    Returns:
+        Par `(inicio_da_validacao, inicio_do_teste)` como timestamps.
     """
     from src.etl.changes import periodos_disponiveis
     from src.ml.splits import particionar
@@ -139,7 +175,18 @@ def _marcos_da_particao(pasta: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
 def periodos_com_tabela(
     tabela: str, pasta: Path = PRIMARY_FOLDER
 ) -> dict[str, Path]:
-    """Competências que têm Parquet desta tabela, em ordem cronológica."""
+    """
+    Competências que têm Parquet desta tabela.
+
+    Args:
+        tabela: nome da tabela na grafia do CSV.
+        pasta: raiz da camada primária.
+
+    Returns:
+        Mapa `{competencia: caminho}` em ordem cronológica. Vazio se a tabela
+        nunca foi convertida — três das 44 têm colunas que aparecem e desaparecem
+        ao longo da série, mas a tabela em si sempre existe (D-20).
+    """
     encontrados = {
         p.parent.name: p for p in sorted(pasta.glob(f"*/{tabela}.parquet"))
     }
@@ -163,6 +210,17 @@ def _empilhar(
     48 milhões de linhas e `tbCargaHorariaSus` 10 milhões no estado, e carregar
     todas as suas colunas quando o grafo só usa duas foi o que levou o processo a
     5,3 GB.
+
+    Args:
+        tabela: nome da tabela na grafia do CSV.
+        arquivos: mapa `{competencia: caminho}`, como `periodos_com_tabela` devolve.
+        filtro_unidades: `co_unidade` a manter, empurrado como predicado no scan.
+            `None` não filtra, o que só é aceitável no recorte nacional.
+        colunas_pedidas: projeção a aplicar. `None` usa `CNES_USEFUL_COLUMNS`.
+
+    Returns:
+        Tabela Arrow com os snapshots empilhados e a coluna de tempo
+        acrescentada, contendo a data do snapshot de cada linha.
     """
     fatias: list[pa.Table] = []
     colunas_declaradas = colunas_pedidas or CNES_USEFUL_COLUMNS[tabela]
@@ -240,6 +298,22 @@ def montar_db(
     `CNES_USEFUL_COLUMNS`. Use `colunas_minimas_para_grafo()` quando o destino
     for a montagem do grafo: no recorte estadual isso é a diferença entre 5,3 GB
     e caber na máquina. Tabelas ausentes do dicionário são omitidas do Database.
+
+    Args:
+        recorte: prefixo de código IBGE; `None` é o país inteiro.
+        pasta: raiz da camada primária.
+        tabelas: subconjunto de `FACT_TABLES` a incluir. `None` inclui todas.
+        tolerar_falhas: segue adiante quando uma tabela filha não pode ser lida.
+        colunas: projeção por tabela, sobrescrevendo `CNES_USEFUL_COLUMNS`.
+
+    Returns:
+        `Database` do RelBench. As tabelas guardam `pyarrow.Table`, não
+        `pandas.DataFrame` — chame `.to_pandas()` explicitamente.
+
+    Raises:
+        ErroGrafo: nenhum Parquet da tabela raiz na pasta, o recorte não casou
+            com estabelecimento algum, ou uma tabela filha falhou com
+            `tolerar_falhas=False`.
     """
     arquivos_raiz = periodos_com_tabela(TABELA_RAIZ, pasta)
     if not arquivos_raiz:
@@ -328,6 +402,15 @@ class CNESDataset(Dataset):
         pasta: Path = PRIMARY_FOLDER,
         **kwargs,
     ) -> None:
+        """
+        Args:
+            recorte: prefixo de código IBGE. Guardado como atributo justamente
+                porque o RelBench chama `make_db` sem argumentos.
+            val_timestamp: início da validação. `None` deriva da partição.
+            test_timestamp: início do teste. `None` deriva da partição.
+            pasta: raiz da camada primária.
+            **kwargs: repassados ao `Dataset` do RelBench.
+        """
         self.recorte = recorte
         self.pasta = pasta
         # Derivados da partição de src/ml/splits.py sobre os snapshots que existem
@@ -340,6 +423,14 @@ class CNESDataset(Dataset):
         super().__init__(**kwargs)
 
     def make_db(self) -> Database:
+        """
+        Monta o `Database` do recorte da instância.
+
+        Returns:
+            `Database` do RelBench com as 44 tabelas do schema. Sem projeção de
+            colunas: quem precisa da projeção mínima de D-23 chama `montar_db`
+            diretamente com `colunas=`.
+        """
         return montar_db(self.recorte, self.pasta)
 
 
@@ -366,10 +457,20 @@ class GrafoGeografico:
 
     @property
     def n_nos(self) -> int:
+        """
+        Returns:
+            Número de estabelecimentos posicionáveis, que é o tamanho do grafo.
+            No estado são 127.868 de 146.679, ou 87,2% (D-22).
+        """
         return len(self.unidades)
 
     @property
     def n_arestas(self) -> int:
+        """
+        Returns:
+            Número de arestas depois da simetrização, então cada vizinhança kNN
+            conta duas vezes salvo quando já era mútua.
+        """
         return self.arestas.num_rows
 
 
@@ -386,6 +487,13 @@ def _descartar_fora_da_amostra(df: pd.DataFrame, desvios: float) -> pd.DataFrame
     como centro e o desvio absoluto mediano (MAD) como escala, ambos robustos aos
     outliers que se quer remover. Uma caixa fixa por município exigiria uma
     tabela de caixas e quebraria ao trocar o recorte espacial.
+
+    Args:
+        coords: coordenadas por estabelecimento, uma linha por unidade.
+        desvios: quantos MAD de tolerância em torno da mediana.
+
+    Returns:
+        Subconjunto de `coords` dentro da caixa robusta.
 
     O default de `desvios` foi calibrado contra o comportamento de uma caixa
     desenhada à mão em torno do município de São Paulo, que retinha 98,8% das
@@ -434,6 +542,17 @@ def coordenadas_por_unidade(
     distância entre o dado usado e o período em questão. `'mais_recente'`
     existe para quem quiser a coordenada mais provavelmente correta, aceitando
     olhar mais adiante.
+
+    Args:
+        db: `Database` de onde sai a tabela raiz.
+        periodo_referencia: competência a usar. `None` aplica a política sobre a
+            série inteira.
+        politica: `'mais_antiga'` ou `'mais_recente'`.
+
+    Returns:
+        DataFrame com `co_unidade`, latitude e longitude, uma linha por unidade,
+        já filtrado pela caixa de plausibilidade. No estado sobram 87,2% das
+        unidades (D-22).
 
     `periodo_referencia` corta a série antes de escolher, o que permite montar o
     grafo sem enxergar nada além de uma data — útil para verificar quanto o
@@ -492,6 +611,21 @@ def montar_grafo_geografico(
     O grafo é tornado simétrico: se A está entre os k vizinhos de B mas B não
     está entre os de A, a aresta existe nos dois sentidos. Vizinhança física é
     uma relação simétrica, e um kNN cru não é.
+
+    Args:
+        db: `Database` de onde saem as coordenadas.
+        k: quantos vizinhos por nó. Reduzido automaticamente se houver menos
+            unidades que isso.
+        raio_km: descarta arestas mais longas que este raio. `None` não corta.
+        periodo_referencia: competência das coordenadas. `None` usa a série.
+        politica_coordenada: `'mais_antiga'` ou `'mais_recente'`.
+
+    Returns:
+        `GrafoGeografico` com as unidades na ordem dos índices das arestas, as
+        arestas em formato `(2, E)` e as distâncias na mesma ordem.
+
+    Raises:
+        ErroGrafo: menos de dois estabelecimentos com coordenada válida.
     """
     from sklearn.neighbors import BallTree
 

@@ -34,6 +34,15 @@ def download_cnes_zips(
     `reprocess=False` pula o que já existe em disco. É o default porque cada ZIP
     tem centenas de megabytes e a série inteira são vários gigabytes: rebaixar
     por acidente é caro. Os três estágios do ETL usam o mesmo default.
+
+    Args:
+        periods: competências `YYYYMM` a baixar.
+        output_folder: destino, a camada 01.
+        reprocess: rebaixa o que já existe em disco.
+        block_size: tamanho do bloco de streaming, em bytes.
+
+    Returns:
+        Nada. O efeito é o arquivo em disco.
     """
     output_folder.mkdir(parents=True, exist_ok=True)
 

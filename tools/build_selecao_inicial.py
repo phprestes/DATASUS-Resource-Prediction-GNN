@@ -80,7 +80,16 @@ TIPO_SQL = re.compile(
 
 
 def chave_tabela(nome: str) -> str:
-    """RL_ESTAB_COMPLEMENTAR e rlEstabComplementar viram a mesma chave."""
+    """
+    Normaliza o nome de uma tabela para casar as três grafias do projeto.
+
+    Args:
+        nome: nome em qualquer grafia — dicionário Oracle, CSV ou DuckDB.
+
+    Returns:
+        Chave sem sublinhado e em minúsculas: `RL_ESTAB_COMPLEMENTAR` e
+        `rlEstabComplementar` viram a mesma.
+    """
     return nome.replace("_", "").lower()
 
 
@@ -90,6 +99,12 @@ def chave_coluna(nome: str) -> str:
 
     Desfaz três deformações: o embrulho TO_CHAR(...) das datas, o alias de
     tabela que às vezes vem dentro dele, e a perda de underscores pelo OCR.
+
+    Args:
+        nome: nome da coluna em qualquer das grafias.
+
+    Returns:
+        Chave normalizada, comparável entre PDF, CSV e relatório empírico.
     """
     n = nome.strip().lower()
     if n.startswith("to_char"):
@@ -114,6 +129,16 @@ class ColunaPdf:
 
 
 def extrair_texto_pdf(pdf: Path) -> str:
+    """
+    Converte o dicionário de dados em texto com `pdftotext -layout`.
+
+    Args:
+        pdf: caminho do PDF.
+
+    Returns:
+        Texto extraído. `-layout` preserva as colunas da tabela, sem o que o
+        parse não consegue separar campo de descrição.
+    """
     with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
         destino = Path(tmp.name)
     try:
@@ -136,6 +161,13 @@ def juntar(acumulado: str, continuacao: str) -> str:
     hífen quando ele encerra a linha imediatamente depois de um caractere
     alfanumérico — assim hifens legítimos no meio do texto, como em
     "(0-Alugada, 1-Própria)", ficam intactos, porque não estão no fim da linha.
+
+    Args:
+        acumulado: texto já montado.
+        continuacao: linha seguinte a emendar.
+
+    Returns:
+        Texto emendado, com a hifenização desfeita quando for o caso.
     """
     if re.search(r"[0-9a-záéíóúâêôãõçA-ZÁÉÍÓÚÂÊÔÃÕÇ]-$", acumulado):
         return acumulado[:-1] + continuacao.strip()
@@ -151,6 +183,12 @@ def parse_pdf(texto: str) -> dict[str, tuple[str, list[ColunaPdf]]]:
     "Útil", "Não Útil" ou "Talvez útil", ela abre uma coluna nova; senão é
     continuação — do rótulo da seção, se ele ainda estiver aberto, ou da
     descrição da última coluna.
+
+    Args:
+        texto: saída de `extrair_texto_pdf`.
+
+    Returns:
+        Mapa `{chave_da_tabela: (rotulo_humano, colunas)}`.
     """
     secao = re.compile(r"^\d+\.\d+\s+([A-Z][A-Z_0-9]+)\s*\((.*)$")
     # Ruído de paginação: número de página isolado, ou o cabeçalho da tabela.
@@ -233,6 +271,13 @@ def parse_relatorio(caminho: Path) -> dict[str, StatTabela]:
 
     O relatório é um Markdown gerado pelo notebook 01: um cabeçalho por
     (tabela, competência) seguido de uma tabela de estatísticas por coluna.
+
+    Args:
+        caminho: arquivo do relatório.
+
+    Returns:
+        Mapa `{chave_da_tabela: StatTabela}`, com contagem de linhas e medições
+        por competência.
     """
     texto = caminho.read_text(encoding="utf-8")
     cabecalho = re.compile(r"^### RELATÓRIO ESTRUTURAL: (\w+) \(Competência: (\d+)\)")
@@ -283,9 +328,15 @@ def degenerada(medicoes: list[StatColuna]) -> str | None:
     """
     Aplica o filtro empírico a uma coluna, dadas suas medições por snapshot.
 
-    Devolve o motivo da rejeição, ou None se a coluna sobrevive. Uma coluna é
-    degenerada quando não carrega informação nenhuma: está sempre nula, ou é
-    constante em todos os snapshots medidos.
+    Uma coluna é degenerada quando não carrega informação nenhuma: está sempre
+    nula, ou é constante em todos os snapshots medidos.
+
+    Args:
+        medicoes: estatísticas da coluna, uma por competência.
+
+    Returns:
+        Motivo da rejeição, ou `None` se a coluna sobrevive. Sem medição alguma
+        também devolve `None` — fica pendente em vez de rejeitada.
     """
     if not medicoes:
         return None  # sem medição não se rejeita; fica pendente
@@ -333,6 +384,14 @@ def carregar_constant_do_git(ref: str = "HEAD") -> dict[str, object]:
     fonte da verdade, então não há como importá-lo. Lê-lo do histórico mantém
     este script executável, e com isso mantém verificável a alegação de que o
     doc reproduz a seleção anterior.
+
+    Args:
+        ref: referência git de onde ler. Tenta também `ref~1`, porque o commit que
+            deletou o arquivo não o tem mais na árvore.
+
+    Returns:
+        Mapa com as constantes do módulo antigo (`CNES_DTYPES`, `CNES_FKEY` e as
+        demais).
     """
     for candidato in (f"{ref}:src/constant.py", f"{ref}~1:src/constant.py"):
         resultado = subprocess.run(
@@ -359,6 +418,19 @@ def carregar_constant_do_git(ref: str = "HEAD") -> dict[str, object]:
 
 
 def montar(ref_git: str = "HEAD") -> tuple[list[TabelaDoc], dict[str, int]]:
+    """
+    Junta as três fontes numa lista de tabelas documentadas.
+
+    As fontes são o PDF do dicionário, o `src/constant.py` lido do histórico do
+    git (o arquivo foi deletado) e o relatório empírico de perfil.
+
+    Args:
+        ref_git: referência de onde ler o `constant.py` antigo.
+
+    Returns:
+        Par `(tabelas, contadores)`. Os contadores registram quantas colunas
+        entraram em cada classificação, para conferência do resultado.
+    """
     antigo = carregar_constant_do_git(ref_git)
     CNES_DTYPES = antigo["CNES_DTYPES"]
     CNES_FKEY = antigo["CNES_FKEY"]
@@ -561,6 +633,16 @@ deformações são recorrentes:
 
 
 def emitir(tabelas: list[TabelaDoc], contadores: dict[str, int]) -> str:
+    """
+    Serializa as tabelas no formato Markdown que `src/config/schema.py` parseia.
+
+    Args:
+        tabelas: saída de `montar`.
+        contadores: contagem por classificação, para o cabeçalho do documento.
+
+    Returns:
+        Conteúdo completo de `01-selecao-tabelas.md`.
+    """
     incluidas = [t for t in tabelas if t.escopo == "incluida"]
     fora = [t for t in tabelas if t.escopo == "fora"]
 
@@ -614,6 +696,13 @@ def emitir(tabelas: list[TabelaDoc], contadores: dict[str, int]) -> str:
 
 
 def main() -> int:
+    """
+    Entrada de linha de comando do migrador.
+
+    Returns:
+        0 em sucesso. Recusa sobrescrever o documento sem `--force`: ele é a fonte
+        da verdade do schema e já divergiu do que este script geraria.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="só diagnostica o parse")
     ap.add_argument(

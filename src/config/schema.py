@@ -58,7 +58,14 @@ class Coluna:
 
     @property
     def materializar(self) -> bool:
-        """Se a coluna deve existir no Parquet."""
+        """
+        Se a coluna deve existir no Parquet.
+
+        Returns:
+            `True` para colunas `util` ou `pendente`. A `pendente` entra no
+            Parquet para poder ser medida, mas fica fora de CNES_USEFUL_COLUMNS
+            até ser aprovada.
+        """
         return self.classificacao in ("util", "pendente")
 
 
@@ -79,20 +86,57 @@ class Tabela:
     linha_doc: int = 0
 
     def por_classificacao(self, *quais: str) -> list[str]:
+        """
+        Nomes das colunas com alguma das classificações pedidas.
+
+        Args:
+            *quais: classificações aceitas, entre `util`, `pendente` e
+                `descartada`.
+
+        Returns:
+            Nomes na ordem em que aparecem no documento.
+        """
         return [c.nome for c in self.colunas if c.classificacao in quais]
 
 
 def _limpar(celula: str) -> str:
-    """Remove crases e marcação de célula vazia."""
+    """
+    Normaliza uma célula da tabela Markdown.
+
+    Args:
+        celula: texto bruto da célula, possivelmente com crases e espaços.
+
+    Returns:
+        O conteúdo sem crases nem espaços. Célula vazia — marcada com `-` no
+        documento — vira string vazia.
+    """
     valor = celula.strip().strip("`").strip()
     return "" if valor == "-" else valor
 
 
 def _celulas(linha: str) -> list[str]:
+    """
+    Divide uma linha de tabela Markdown nas suas células.
+
+    Args:
+        linha: linha começando e terminando com `|`.
+
+    Returns:
+        Conteúdo de cada célula, sem espaços nas bordas.
+    """
     return [c.strip() for c in linha.strip().strip("|").split("|")]
 
 
 def _e_separador(celulas: list[str]) -> bool:
+    """
+    Se a linha é o separador entre cabeçalho e corpo (`|---|---|`).
+
+    Args:
+        celulas: células já divididas por `_celulas`.
+
+    Returns:
+        `True` quando toda célula é composta apenas de `-`, `:` e espaço.
+    """
     return all(set(c) <= set(":- ") and c for c in celulas)
 
 
@@ -100,9 +144,22 @@ def _parse(texto: str, origem: str) -> tuple[list[Tabela], dict[str, str]]:
     """
     Percorre o Markdown e devolve as tabelas e os motivos de exclusão.
 
-    Só o conteúdo depois de `## Tabelas` descreve schema. O cabeçalho do doc tem
-    tabelas Markdown que documentam vocabulário e escopo, e precisam ser
-    ignoradas — daí o parser esperar por aquela âncora antes de começar.
+    Só o conteúdo depois de `## Tabelas` descreve schema: o cabeçalho do
+    documento tem tabelas Markdown que documentam vocabulário e escopo, e o
+    parser espera aquela âncora antes de começar.
+
+    Args:
+        texto: conteúdo integral de `01-selecao-tabelas.md`.
+        origem: nome do arquivo, usado só para compor mensagens de erro.
+
+    Returns:
+        Par `(tabelas, fora)`. `tabelas` na ordem do documento, incluindo as de
+        escopo `fora`; `fora` mapeia nome da tabela excluída para o motivo.
+
+    Raises:
+        ErroSchema: escopo ou classificação inválidos, cabeçalho sem as colunas
+            obrigatórias, linha com número de células diferente do cabeçalho,
+            coluna sem nome, ou nenhuma tabela encontrada.
     """
     tabelas: list[Tabela] = []
     fora: dict[str, str] = {}
@@ -222,6 +279,19 @@ def _parse(texto: str, origem: str) -> tuple[list[Tabela], dict[str, str]]:
 
 
 def _validar(tabelas: list[Tabela], origem: str) -> None:
+    """
+    Checa a consistência interna do schema já parseado.
+
+    Args:
+        tabelas: saída de `_parse`, na ordem do documento.
+        origem: nome do arquivo, usado só para compor mensagens de erro.
+
+    Raises:
+        ErroSchema: tabela declarada duas vezes, coluna repetida, chave primária
+            ou natural citando coluna inexistente, tabela `incluida` sem nenhuma
+            coluna aproveitável, ou chave estrangeira apontando para tabela que
+            não está no escopo.
+    """
     nomes = {t.nome for t in tabelas if t.escopo == "incluida"}
 
     vistos: dict[str, int] = {}
@@ -277,11 +347,18 @@ def _validar(tabelas: list[Tabela], origem: str) -> None:
 @lru_cache(maxsize=1)
 def carregar() -> tuple[tuple[Tabela, ...], dict[str, str]]:
     """
-    Lê e valida docs/01-selecao-tabelas.md. Resultado em cache por processo.
+    Lê e valida `docs/01-selecao-tabelas.md`. Resultado em cache por processo.
 
-    Devolve as tabelas na ordem do documento e o mapa {tabela: motivo} das
-    excluídas. Use este acesso quando precisar da justificativa ou do tipo de
-    origem de uma coluna; para o pipeline, prefira as constantes do módulo.
+    Use este acesso quando precisar da justificativa ou do tipo de origem de uma
+    coluna; para o pipeline, prefira as constantes do módulo, que já são
+    derivadas daqui.
+
+    Returns:
+        Par `(tabelas, fora)`. `tabelas` na ordem do documento; `fora` mapeia
+        nome da tabela excluída para o motivo declarado.
+
+    Raises:
+        ErroSchema: documento ausente, malformado ou internamente inconsistente.
     """
     if not SELECAO_TABELAS.exists():
         raise ErroSchema(
@@ -325,7 +402,18 @@ CNES_FKEY: dict[str, dict[str, str]] = {
 
 
 def tabela(nome: str) -> Tabela:
-    """Acesso à declaração completa de uma tabela, incluindo as descartadas."""
+    """
+    Declaração completa de uma tabela, incluindo colunas descartadas.
+
+    Args:
+        nome: nome da tabela na grafia do CSV, por exemplo `tbEstabelecimento`.
+
+    Returns:
+        A `Tabela` com todas as suas colunas, qualquer que seja o escopo.
+
+    Raises:
+        KeyError: o nome não aparece no documento.
+    """
     for t in _TABELAS:
         if t.nome == nome:
             return t

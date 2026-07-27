@@ -43,6 +43,26 @@ def process_cnes_zip(
     dimensiona o buffer pela RAM total da máquina, o que com N processos
     significa N vezes a memória disponível. Nada disso muda o default de quem
     roda uma competência por vez.
+
+    Args:
+        periods: competências `YYYYMM` a ingerir.
+        input_folder: camada 01, com os ZIP.
+        output_folder: camada 02, um DuckDB por competência.
+        reprocess: reingere competência já convertida.
+        only_fact_tables: restringe às tabelas de `FACT_TABLES`.
+        tabelas: subconjunto explícito. Produz DuckDB **parcial**.
+        temp_folder: onde os CSV são descompactados um a um. Precisa ser próprio
+            por processo em execução paralela.
+        limite_memoria: teto do DuckDB, por exemplo `'8GB'`. `None` deixa o
+            DuckDB dimensionar pela RAM total.
+
+    Returns:
+        Nada. O efeito é o DuckDB em disco. A tabela é criada com o **nome
+        sufixado** pela competência (`tbEstabelecimento201701`), e `to_parquet`
+        tira o sufixo de novo — mudar a largura da competência quebra os dois.
+
+    Raises:
+        ValueError: `tabelas` cita nome fora do escopo do documento de seleção.
     """
     if tabelas is not None:
         desconhecidas = [t for t in tabelas if t not in FACT_TABLES]

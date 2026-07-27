@@ -68,6 +68,18 @@ class GrafoPorTransicao:
     resumo: dict[str, dict] = field(default_factory=dict)
 
     def para(self, transicao: Transicao) -> HeteroData:
+        """
+        Grafo que serve uma transição, indexado pela origem dela.
+
+        Args:
+            transicao: transição a atender.
+
+        Returns:
+            O `HeteroData` cortado em `transicao.origem`.
+
+        Raises:
+            ErroGNN: nenhum grafo montado para aquela origem.
+        """
         if transicao.origem not in self.por_origem:
             raise ErroGNN(
                 f"nenhum grafo montado para a origem {transicao.origem}. "
@@ -77,6 +89,11 @@ class GrafoPorTransicao:
 
     @property
     def n_grafos(self) -> int:
+        """
+        Returns:
+            Quantos grafos distintos existem. No modo completo é um por origem de
+            transição; no compatível é um só, replicado.
+        """
         return len(self.por_origem)
 
 
@@ -104,6 +121,14 @@ def _vocabularios(tabela: str) -> list[str]:
     Exclui a chave do estabelecimento e as colunas de município: um nó por
     município ligaria todos os estabelecimentos da cidade entre si, que é a
     degeneração que `escolher_categoria` evita no pipeline do notebook (D-27).
+
+    Args:
+        tabela: nome da tabela de fato.
+
+    Returns:
+        Colunas que viram vocabulário. Mais de uma por tabela é a diferença
+        central do modo completo: `rlEstabServClass` passa a contribuir serviço
+        **e** classificação.
     """
     dtypes = CNES_DTYPES.get(tabela, {})
     return [
@@ -116,7 +141,17 @@ def _vocabularios(tabela: str) -> list[str]:
 
 
 def _colunas_de_peso(tabela: str) -> list[str]:
-    """Colunas inteiras da tabela: quantidade existente, em uso, leitos, vagas."""
+    """
+    Colunas inteiras da tabela, que viram peso de aresta.
+
+    Args:
+        tabela: nome da tabela de fato.
+
+    Returns:
+        Colunas `Int64`. Agregadas por par com soma e `log1p`, viram o
+        `edge_weight` que `GraphConv` aceita — a projeção mínima descartava essa
+        intensidade por completo.
+    """
     dtypes = CNES_DTYPES.get(tabela, {})
     return [
         coluna
@@ -138,6 +173,19 @@ def montar_um_grafo(
     `com_atributos=False` reproduz a montagem do notebook: um vocabulário por
     tabela e aresta sem peso. É o que o modo compatível usa, e existe para que a
     diferença entre as metades da matriz seja atribuível (D-34).
+
+    Args:
+        db: `Database` de onde saem raiz e tabelas de fato.
+        unidades: `co_unidade` na ordem dos índices de nó.
+        ate_periodo: corte. Toda linha posterior é ignorada.
+        com_atributos: projeção completa com peso de aresta e vários vocabulários
+            por tabela. `False` replica a montagem do notebook.
+        min_arestas: descarta relações com menos arestas que isso. Zero no modo
+            completo, 100 no compatível.
+
+    Returns:
+        `HeteroData` com o atributo `ate_periodo` registrado, que
+        `verificar_sem_vazamento` depois confere.
     """
     from src.ml.gnn import escolher_categoria
 
@@ -242,6 +290,19 @@ def montar(
     """
     Um grafo por origem de transição, reaproveitando origens repetidas.
 
+    Args:
+        db: `Database` de onde os grafos são montados.
+        unidades: `co_unidade` na ordem dos índices de nó, compartilhada por
+            todos os grafos.
+        transicoes: transições a atender.
+        com_atributos: projeção completa com peso de aresta.
+        min_arestas: mínimo de arestas por relação.
+        verboso: imprime progresso por grafo.
+        permitir_maquina_pequena: ignora a guarda de RAM. Só para dado sintético.
+
+    Returns:
+        `GrafoPorTransicao` com um grafo por origem distinta e o resumo de cada.
+
     Numa partição encadeada as origens são distintas, mas a função não assume
     isso: `202401 -> 202501` e `202401 -> 202601` compartilhariam o mesmo grafo.
     """
@@ -281,6 +342,15 @@ def verificar_sem_vazamento(
     É a garantia de D-25 traduzida para o grafo por transição, e o teste que
     justifica trocar o corte estático: o grafo de uma transição pode ser
     contemporâneo da **origem**, nunca do destino.
+
+    Args:
+        grafos: conjunto a verificar.
+        transicoes: transições que ele precisa atender.
+
+    Raises:
+        ErroGNN: grafo sem corte registrado, ou com corte que alcança o destino da
+            transição que ele serve — caso em que a aresta estabelecimento-item em
+            `t+1` é o próprio rótulo.
     """
     for transicao in transicoes:
         grafo = grafos.para(transicao)
@@ -301,6 +371,13 @@ def salvar(grafos: GrafoPorTransicao, pasta: Path) -> Path:
 
     No recorte nacional a montagem domina o tempo de preparação, e as quatro
     células da matriz reusam os mesmos grafos por escopo e modo.
+
+    Args:
+        grafos: conjunto a gravar.
+        pasta: destino. Criada se não existir.
+
+    Returns:
+        Caminho do `grafos.pt` escrito.
     """
     pasta.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -315,6 +392,17 @@ def salvar(grafos: GrafoPorTransicao, pasta: Path) -> Path:
 
 
 def carregar(caminho: Path) -> GrafoPorTransicao:
+    """
+    Lê os grafos materializados de volta.
+
+    Args:
+        caminho: arquivo `grafos.pt`.
+
+    Returns:
+        `GrafoPorTransicao` reconstruído. Carregado em CPU: só o grafo da
+        transição em curso vai para a GPU, o que mantém o pico de VRAM no tamanho
+        de um grafo em vez da soma.
+    """
     pacote = torch.load(caminho, weights_only=False)
     return GrafoPorTransicao(
         unidades=pacote["unidades"],
