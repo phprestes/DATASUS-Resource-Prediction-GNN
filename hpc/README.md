@@ -41,23 +41,35 @@ export IC_HPC_DATA=/var/fasttmp/$USER/ic
 # 3. Confirme o que a máquina tem antes de gastar horas nela.
 make -f hpc/Makefile ambiente
 
-# 4. ETL nacional. Sob screen: são horas.
-screen -S etl
-make -f hpc/Makefile etl
-#    Sem internet no nó? Envie os ZIPs e use:
-#    rsync -av data/01_raw/ servidor:$IC_HPC_DATA/01_raw/
-#    make -f hpc/Makefile etl-de-zips
-
-# 5. Confira que a camada produzida é a mesma do notebook, se tiver as duas.
-python -m hpc.etl.pipeline --pular-download --conferir-contra /caminho/para/data/03_primary
-
-# 6. As quatro células da matriz, em série.
-screen -S matriz
-make -f hpc/Makefile matriz
+# 4. Do zero ao resultado, num comando. Sob screen: são muitas horas.
+screen -S ic
+make -f hpc/Makefile tudo-do-zero
 ```
 
-Da raiz do repositório os mesmos alvos aparecem com prefixo: `make hpc-ambiente`,
-`make hpc-etl`, `make hpc-experimento RECORTE= MODO=completo`, `make hpc-matriz`.
+`tudo-do-zero` encadeia `ambiente`, `etl` e `tudo`, e para no primeiro que falhar. Os
+três são retomáveis: relançar o mesmo comando depois de uma queda — ou depois do corte
+de 168 h — continua de onde parou. Competência já convertida é pulada, célula com
+resultado em `docs/resultados/` é pulada, e o treino retoma do checkpoint da época.
+
+Se preferir acompanhar estágio a estágio, ou tratar algum caso especial:
+
+```bash
+make -f hpc/Makefile etl          # só o ETL, horas
+make -f hpc/Makefile plano        # o que a bateria vai rodar, sem rodar
+make -f hpc/Makefile tudo         # só a bateria
+make -f hpc/Makefile matriz       # só as quatro células de D-34, com pandemia
+
+# Sem internet no nó? Envie os ZIPs e parta deles:
+rsync -av data/01_raw/ servidor:$IC_HPC_DATA/01_raw/
+make -f hpc/Makefile etl-de-zips
+
+# Confira que a camada produzida é a mesma do notebook, se tiver as duas:
+python -m hpc.etl.pipeline --pular-download --conferir-contra /caminho/para/data/03_primary
+```
+
+Da raiz do repositório os mesmos alvos aparecem com prefixo: `make hpc-tudo-do-zero`,
+`make hpc-ambiente`, `make hpc-etl`, `make hpc-experimento RECORTE= MODO=completo`,
+`make hpc-matriz`.
 
 ## A matriz que este pipeline existe para medir
 

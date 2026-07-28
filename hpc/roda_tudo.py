@@ -77,21 +77,42 @@ class Execucao:
         )
 
     @property
-    def saida(self) -> Path:
+    def sufixo(self) -> str:
         """
-        Onde o resultado desta célula é gravado.
+        Parte do nome do arquivo que identifica a célula, sem a data.
 
         Precisa casar exatamente com o nome que o orquestrador escolhe, senão a
         retomada não reconhece o que já rodou e a bateria refaz tudo.
         """
         nome_escopo = self.recorte or "pais"
-        if self.pipeline == "src":
-            base = f"{date.today()}-trilhas-{nome_escopo}"
-        else:
-            base = f"{date.today()}-hpc-{nome_escopo}-{self.modo}"
-        return PASTA_RESULTADOS / f"{base}-{self.variante}-s{self.semente}.json"
+        meio = (
+            f"trilhas-{nome_escopo}"
+            if self.pipeline == "src"
+            else f"hpc-{nome_escopo}-{self.modo}"
+        )
+        return f"{meio}-{self.variante}-s{self.semente}.json"
 
-    def comando(self, epocas: int, pasta_primaria: Path | None) -> list[str]:
+    @property
+    def saida(self) -> Path:
+        """Onde o resultado desta célula é gravado hoje."""
+        return PASTA_RESULTADOS / f"{date.today()}-{self.sufixo}"
+
+    def resultados_existentes(self) -> list[Path]:
+        """
+        Resultados desta célula, de qualquer data.
+
+        A busca ignora a data de propósito: a bateria leva mais de um dia, e
+        casar por `date.today()` faria toda célula concluída antes da meia-noite
+        deixar de ser reconhecida e rodar de novo.
+        """
+        return sorted(PASTA_RESULTADOS.glob(f"*-{self.sufixo}"))
+
+    def comando(
+        self,
+        epocas: int,
+        pasta_primaria: Path | None,
+        escapatorias: tuple[str, ...] = (),
+    ) -> list[str]:
         """
         Linha de comando completa desta execução.
 
@@ -99,6 +120,8 @@ class Execucao:
             epocas: teto de épocas de treino, repassado ao orquestrador.
             pasta_primaria: camada primária a usar. `None` deixa cada pipeline
                 escolher o seu default — o que só é correto fora do cluster.
+            escapatorias: flags que desligam as guardas de CPU e de RAM. Só as
+                células `hpc` as aceitam, e só dado sintético justifica usá-las.
 
         Returns:
             Argumentos prontos para `subprocess.run`.
@@ -107,7 +130,6 @@ class Execucao:
             sys.executable, "-m",
             "tools.roda_experimento" if self.pipeline == "src" else "hpc.ml.experimento",
             "--recorte", self.recorte,
-            "--epocas", str(epocas),
             "--semente", str(self.semente),
         ]
         if VARIANTES[self.variante]:
@@ -115,7 +137,15 @@ class Execucao:
         if pasta_primaria is not None:
             comum += ["--pasta-primaria", str(pasta_primaria)]
         if self.pipeline == "hpc":
-            comum += ["--modo", self.modo, "--reusar-grafos"]
+            # `--epocas` só aqui: a célula `src` é o alvo a reproduzir (D-44,
+            # D-46) e tem de ficar com os próprios defaults, quaisquer que sejam
+            # os da bateria.
+            comum += [
+                "--epocas", str(epocas),
+                "--modo", self.modo,
+                "--reusar-grafos",
+                *escapatorias,
+            ]
         return comum
 
 
@@ -163,7 +193,12 @@ def planejar(
     return plano
 
 
-def rodar(execucao: Execucao, epocas: int, pasta_primaria: Path | None) -> dict:
+def rodar(
+    execucao: Execucao,
+    epocas: int,
+    pasta_primaria: Path | None,
+    escapatorias: tuple[str, ...] = (),
+) -> dict:
     """
     Executa uma célula e devolve o registro dela para o manifesto.
 
@@ -171,16 +206,23 @@ def rodar(execucao: Execucao, epocas: int, pasta_primaria: Path | None) -> dict:
         execucao: célula a rodar.
         epocas: teto de épocas, repassado ao orquestrador.
         pasta_primaria: camada primária, ou `None` para o default do pipeline.
+        escapatorias: flags que desligam as guardas de CPU e de RAM.
 
     Returns:
         Registro com rótulo, situação (`"pulada"`, `"ok"` ou `"falhou"`), código
         de saída, duração em segundos e caminho do resultado.
     """
-    if execucao.saida.exists():
-        print(f"  já existe, pulando: {execucao.saida.name}", flush=True)
-        return {**asdict(execucao), "situacao": "pulada", "segundos": 0}
+    existentes = execucao.resultados_existentes()
+    if existentes:
+        print(f"  já existe, pulando: {existentes[-1].name}", flush=True)
+        return {
+            **asdict(execucao),
+            "situacao": "pulada",
+            "segundos": 0,
+            "resultado": existentes[-1].name,
+        }
 
-    comando = execucao.comando(epocas, pasta_primaria)
+    comando = execucao.comando(epocas, pasta_primaria, escapatorias)
     print(f"  $ {' '.join(comando)}", flush=True)
     t0 = time.time()
     concluido = subprocess.run(comando)
@@ -217,16 +259,31 @@ def main() -> int:
                     help="camada primária; no cluster, $IC_HPC_DATA/03_primary")
     ap.add_argument("--seco", action="store_true",
                     help="imprime o plano e sai, sem rodar nada")
-    ap.add_argument("--continuar-apos-falha", action="store_true", default=True,
-                    help="mantém a bateria de pé quando uma célula falha (padrão)")
+    ap.add_argument("--parar-na-falha", action="store_true",
+                    help="interrompe a bateria na primeira célula que falhar; o "
+                         "padrão é seguir e relatar os buracos no fim")
+    ap.add_argument("--permitir-cpu", action="store_true",
+                    help="repassa às células hpc; só para exercitar o caminho "
+                         "fora do servidor, o número não é comparável")
+    ap.add_argument("--permitir-maquina-pequena", action="store_true",
+                    help="repassa às células hpc; só com dado sintético")
     args = ap.parse_args()
+
+    escapatorias = tuple(
+        flag
+        for flag, ligada in (
+            ("--permitir-cpu", args.permitir_cpu),
+            ("--permitir-maquina-pequena", args.permitir_maquina_pequena),
+        )
+        if ligada
+    )
 
     pipelines = ("src", "hpc") if args.so == "ambos" else (args.so,)
     plano = planejar(pipelines, tuple(args.escopos), args.sementes)
 
     print(f"{len(plano)} execuções planejadas\n")
     for i, e in enumerate(plano, 1):
-        marca = "·" if not e.saida.exists() else "✓"
+        marca = "✓" if e.resultados_existentes() else "·"
         print(f"  {marca} {i:>3}. {e.rotulo}")
     print()
 
@@ -240,7 +297,7 @@ def main() -> int:
 
     for i, execucao in enumerate(plano, 1):
         print(f"[{i}/{len(plano)}] {execucao.rotulo}", flush=True)
-        registro = rodar(execucao, args.epocas, args.pasta_primaria)
+        registro = rodar(execucao, args.epocas, args.pasta_primaria, escapatorias)
         registros.append(registro)
         # Gravação incremental: uma queda preserva o que já foi medido.
         manifesto.write_text(
@@ -250,7 +307,7 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        if registro["situacao"] == "falhou" and not args.continuar_apos_falha:
+        if registro["situacao"] == "falhou" and args.parar_na_falha:
             print("interrompendo por falha", flush=True)
             break
 

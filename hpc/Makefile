@@ -6,10 +6,17 @@
 # ORDEM DE EXECUÇÃO NUMA MÁQUINA NOVA DO CLUSTER
 # ============================================================================
 #
-#     export IC_HPC_DATA=/var/fasttmp/$USER/ic   # fora do repositório, sempre
+#     screen -S ic
+#     make -f hpc/Makefile tudo-do-zero          # ambiente + ETL + bateria
+#
+# É só isso. Os três estágios são retomáveis, então relançar o mesmo comando
+# depois de uma queda continua de onde parou. `IC_HPC_DATA` tem default
+# (/var/fasttmp/$USER/ic) e só precisa ser exportado para mudá-lo.
+#
+# Se preferir acompanhar estágio a estágio:
+#
 #     make -f hpc/Makefile ambiente              # confere RAM, GPU, VRAM, CUDA
-#     screen -S etl && make -f hpc/Makefile etl  # horas
-#     screen -S bateria
+#     make -f hpc/Makefile etl                   # horas
 #     make -f hpc/Makefile plano                 # o que vai rodar, sem rodar
 #     make -f hpc/Makefile tudo                  # a bateria completa
 #
@@ -74,15 +81,17 @@ PERIODOS ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help ambiente etl etl-de-zips grafos experimento matriz plano tudo \
-        smoke limpar-intermediario
+        tudo-do-zero smoke limpar-intermediario
 
 help:  ## Lista os alvos do pipeline do servidor
 	@echo "======================================================================"
 	@echo " Pipeline do servidor — escopo nacional, CUDA, sem as limitações de 9 GB"
 	@echo "======================================================================"
 	@echo ""
-	@echo " Ordem numa máquina nova:"
-	@echo "   export IC_HPC_DATA=/var/fasttmp/\$$USER/ic"
+	@echo " Máquina nova, um comando só (sob screen):"
+	@echo "   make -f hpc/Makefile tudo-do-zero    # ambiente + ETL + bateria"
+	@echo ""
+	@echo " Estágio a estágio, se preferir acompanhar:"
 	@echo "   make -f hpc/Makefile ambiente"
 	@echo "   make -f hpc/Makefile etl        # sob screen, horas"
 	@echo "   make -f hpc/Makefile plano      # confere o que vai rodar"
@@ -152,6 +161,21 @@ tudo:  ## BATERIA COMPLETA: 2 pipelines × 3 escopos × 2 variantes (retomável)
 	@echo "======================================================================"
 	$(PY) -m hpc.roda_tudo --so $(SO) --sementes $(SEMENTES) --epocas $(EPOCAS) \
 		--pasta-primaria $(IC_HPC_DATA)/03_primary
+
+tudo-do-zero:  ## UM COMANDO: confere ambiente, roda o ETL nacional e a bateria
+	@echo "======================================================================"
+	@echo " Máquina nova do cluster, do zero ao resultado. Rode sob screen."
+	@echo ""
+	@echo " 1. ambiente  confere RAM, GPU, VRAM e a raiz de dados"
+	@echo " 2. etl       baixa e converte as 10 competências (horas)"
+	@echo " 3. tudo      a bateria completa (muitas horas)"
+	@echo ""
+	@echo " Raiz de dados: $(IC_HPC_DATA)"
+	@echo " Os três estágios são retomáveis: relançar continua de onde parou."
+	@echo "======================================================================"
+	$(MAKE) -f hpc/Makefile ambiente
+	$(MAKE) -f hpc/Makefile etl
+	$(MAKE) -f hpc/Makefile tudo
 
 # ============================================================ verificação
 
