@@ -530,7 +530,8 @@ def _aquisicao_de_transicao(
     # O treino sorteia o minilote por índice com semente fixa, então a mesma
     # semente sobre ordens diferentes seleciona linhas diferentes e o treino
     # deixa de ser reprodutível — medido em D-42: melhor época 10 contra 99,
-    # MAP@10 0,189 contra 0,300. O LightGBM das baselines sofre do mesmo.
+    # MAP@10 0,189 contra 0,300. O gradient boosting das baselines sofre do
+    # mesmo, porque treina na ordem em que as linhas chegam.
     #
     # Arrow com dicionário em vez de `.df()` direto. `.df()` materializa cada
     # `co_unidade` como um objeto Python — na transição de teste do estado são

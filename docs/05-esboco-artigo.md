@@ -530,8 +530,8 @@ não pareada enganosa por construção.
   vetor de atributos vazio**. *Levantada no pipeline do servidor por um grafo por
   transição; efeito a medir na célula C da Tabela 5.*
 - **O grafo relacional é topologia sem atributo.** A projeção que viabiliza a
-  montagem em 9 GB de memória retém duas colunas por tabela filha, de forma que 298
-  das 368 colunas aprovadas nas tabelas de fato permanecem fora do grafo: as arestas
+  montagem em 9 GB de memória retém duas colunas por tabela filha, de forma que 273
+  das 343 colunas aprovadas nas tabelas filhas permanecem fora do grafo: as arestas
   não carregam peso nem atributo. *Levantada no modo completo, com vocabulário por
   coluna e peso agregado por par.*
 - **Um estado e uma transição de avaliação.** A generalização para outras unidades

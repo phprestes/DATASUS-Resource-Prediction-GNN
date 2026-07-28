@@ -191,8 +191,8 @@ trabalho é a diferença entre elas.
 
 ### Trilha 1 — Baselines tabulares
 
-Módulo [`src/ml/baselines.py`](../src/ml/baselines.py). Quatro modelos, na ordem em
-que o projeto original os previa:
+Módulo [`src/ml/baselines.py`](../src/ml/baselines.py). Cinco modelos — os quatro
+que o projeto original previa, mais um acrescentado por medição:
 
 1. **Persistência ingênua.** O estado em `t+1` é igual ao de `t`. Nenhum
    parâmetro. É o piso: qualquer modelo que não o supere não aprendeu nada.
@@ -205,6 +205,15 @@ que o projeto original os previa:
 4. **Modelo por entidade.** Um modelo por estabelecimento. Mede quanta
    heterogeneidade existe entre estabelecimentos, ou seja, quanto se perde ao
    assumir um processo único para toda a rede.
+5. **Popularidade do item.** Escore igual à taxa histórica de aquisição daquele
+   tipo de equipamento, estimada só no treino. Não estava no cronograma e não é
+   acessório: **é ele que lidera MAP@10 em D-44**, à frente das duas GNNs, e o
+   resultado central do trabalho é essa discordância entre AP e MAP@10. Um
+   relatório da trilha 1 sem ele omite o modelo a bater.
+
+As cinco rodam juntas em `rodar_todas`, e é o que `tools/roda_experimento.py`
+mede — ele já rodou só três, e a consequência foi um relatório sem os dois
+melhores modelos sem estrutura em AP.
 
 ### Trilha 2 — RDL relacional
 
@@ -243,7 +252,10 @@ preenchimento e da sanidade das coordenadas, que o notebook 00 verifica antes de
 a trilha ser considerada viável.
 
 **Cobertura e viés, medidos.** No recorte estadual, 87,3% dos estabelecimentos têm
-coordenada plausível (D-22; D-17 dizia 57%, medido sobre parte da série). A exclusão
+coordenada plausível (D-22; D-17 dizia 57%, medido sobre parte da série). Esse número
+é anterior a D-45, que corrigiu o corte de outlier — ele era medido sobre a amostra
+inteira, e desde D-21 não descartava nada; agora é por município e descarta 1,3% a
+mais. A cobertura precisa ser remedida junto com a visão pareada. A exclusão
 **não é aleatória**: V de Cramér de 0,349 em `co_natureza_jur` e 0,153 em `tp_pfpj`,
 com pessoa jurídica 10,7 pontos mais coberta que pessoa física. Mas ela **não alcança
 os rótulos** — os não posicionáveis concentram 3,9% das aquisições da série e nenhuma
@@ -290,11 +302,13 @@ Regras que a implementação precisa garantir, e que os testes verificam:
 
 ### 6.2 Métricas
 
-Tarefa primária, classificação binária com desbalanceamento severo. Medido no
-gate: **prevalência de 0,065%**, ou um positivo a cada 1.530 candidatos — 18,5
-milhões de exemplos para 12 mil eventos de aquisição. Duas restrições do espaço
-de candidatos foram testadas e rejeitadas, então o desbalanceamento é tratado
-como característica do problema, não como defeito a corrigir (D-19).
+Tarefa primária, classificação binária com desbalanceamento severo. No gate, ainda
+no recorte da capital, a prevalência era de **0,065%** — 18,5 milhões de exemplos
+para 12 mil eventos. No recorte estadual de hoje (D-21) ela é de **0,0478%** sobre
+todos os candidatos e **0,0553%** sobre os posicionáveis, com 6.309 positivos na
+transição de teste. Duas restrições do espaço de candidatos foram testadas e
+rejeitadas, então o desbalanceamento é tratado como característica do problema,
+não como defeito a corrigir (D-19).
 
 - **MAP@k por estabelecimento** é a métrica de destaque. Ela responde à pergunta
   que o trabalho de fato faz — quais equipamentos este estabelecimento

@@ -1,9 +1,10 @@
 """
 Trilha 1: baselines sem estrutura relacional.
 
-O cronograma original previa estes quatro modelos e nenhum foi feito. Eles são o
-que autoriza qualquer afirmação sobre as GNNs: uma métrica de GNN isolada não
-distingue aprendizado de inércia do fenômeno (D-11).
+São o que autoriza qualquer afirmação sobre as GNNs: uma métrica de GNN isolada
+não distingue aprendizado de inércia do fenômeno (D-11). Os quatro primeiros
+vinham do cronograma original; `popularidade_item` foi acrescentado depois e é
+quem lidera MAP@10 em D-44.
 
     persistencia            nada muda; escore constante
     popularidade_item       taxa histórica de aquisição do tipo de equipamento
@@ -267,14 +268,11 @@ def montar_features(
 
     Args:
         tarefa: tabela de rótulos.
-        particao: partição temporal.
-        conjunto: conjunto cujas features montar.
+        atributos_entidade: colunas do estabelecimento a acrescentar, indexadas
+            por `co_unidade`. Verificar que não vazam do futuro é de quem monta.
 
     Returns:
-        Par `(X, y)` com as features codificadas e os rótulos. As features são
-        deliberadamente pobres — código de entidade, período e item — porque a
-        trilha 1 tem de ficar livre de informação relacional e espacial, senão
-        apaga a diferença que o experimento mede.
+        DataFrame de features, uma linha por exemplo da tarefa, na mesma ordem.
     """
     colunas = [tarefa.col_entidade, "periodo_destino"]
     if tarefa.col_item:
@@ -309,12 +307,12 @@ def _codificar(
     em `float32` — metade da memória do `float64` que o sklearn usaria.
 
     Args:
-        serie: coluna a codificar.
-        categorias: vocabulário de referência. `None` deriva da própria série.
+        treino: features do conjunto de treino, de onde saem as categorias.
+        avaliar: features do conjunto a pontuar, mapeadas contra elas.
 
     Returns:
-        Par `(codigos, categorias)`. Valor fora do vocabulário recebe -1, que o
-        LightGBM trata como categoria própria.
+        Par `(x_treino, x_avaliar)` em `float32`. Valor ausente vira -2 e valor
+        fora do vocabulário do treino vira -1.
     """
     colunas = list(treino.columns)
     x_treino = np.empty((len(treino), len(colunas)), dtype=np.float32)
@@ -359,14 +357,19 @@ def gbdt(
     Args:
         tarefa: tabela de rótulos.
         particao: partição temporal.
+        features: features já montadas. `None` chama `montar_features`.
         conjunto: conjunto a prever.
-        so_ultimo_snapshot: treina apenas na transição mais recente do treino,
-            em vez de em todas.
+        apenas_ultimo_snapshot: treina só na transição mais recente do treino.
+        **kwargs: repassados ao estimador do scikit-learn.
 
     Returns:
         `Previsao` do gradient boosting. É o melhor modelo sem estrutura em AP
         (0,00289 em D-44), e o número que a trilha 2 tem de superar para que a
         estrutura signifique algo.
+
+    Raises:
+        ErroBaseline: `apenas_ultimo_snapshot` e a tabela não cobre a última
+            transição da janela de treino.
     """
     _validar_particao(tarefa, particao)
     features = features if features is not None else montar_features(tarefa)
@@ -432,9 +435,10 @@ def por_entidade(
     Args:
         tarefa: tabela de rótulos.
         particao: partição temporal.
+        features: features já montadas. `None` chama `montar_features`.
         conjunto: conjunto a prever.
-        minimo_exemplos: mínimo de exemplos de treino para uma entidade ganhar
-            modelo próprio. Abaixo disso ela cai no modelo global.
+        minimo: mínimo de exemplos de treino para uma entidade ganhar modelo
+            próprio. Abaixo disso ela cai no modelo geral.
 
     Returns:
         `Previsao` com um modelo por entidade suficientemente observada. No

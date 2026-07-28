@@ -779,7 +779,7 @@ curto.
 ## D-24 — Primeiro resultado: as baselines no recorte estadual
 
 **Data:** 2026-07-25 · **Status:** medido · **Valores do GBDT afetados por D-43.**
-O LightGBM treina na ordem em que as linhas chegam, e a ordem era não determinística,
+O gradient boosting treina na ordem em que as linhas chegam, e a ordem era não determinística,
 então os valores de `gbdt_geral` e `gbdt_ultimo_snapshot` variam entre execuções. As
 duas conclusões desta decisão sobrevivem: `persistencia` devolve AP exatamente igual à
 prevalência (não depende de ordem) e AP e MAP@10 ordenam as baselines de formas
@@ -1369,7 +1369,7 @@ supera a geográfica neste recorte e nesta transição.
 - **45% dos nós entram sem feature.** As features de nó saem da última observação
   até o corte do grafo (201701, D-25), e o recorte tinha 80.073 estabelecimentos em
   2017 contra 146.679 na série.
-- **298 das 368 colunas `util` das tabelas de fato ficam fora do grafo.** A
+- **273 das 343 colunas `util` das tabelas filhas ficam fora do grafo.** A
   projeção mínima de D-23 entrega duas colunas por tabela filha, então a aresta não
   tem peso nem atributo: a GNN sabe que a unidade tem um tipo de equipamento e não
   sabe quantos.
@@ -1436,8 +1436,8 @@ pesquisa com um único consumidor não tem por que carregar essa dívida.
 
 **Contexto.** Todo o projeto foi construído sob 9 GB de RAM, e quatro decisões trocaram
 informação por viabilidade: recorte estadual em vez de nacional (D-21), grafo estático
-cortado em 201701 com 45% dos nós sem feature (D-25), projeção mínima que deixa 298 das
-368 colunas `util` fora do grafo (D-23) e treino com negativos a 200:1, validação
+cortado em 201701 com 45% dos nós sem feature (D-25), projeção mínima que deixa 273 das
+343 colunas `util` fora do grafo (D-23) e treino com negativos a 200:1, validação
 amostrada e um único passo de gradiente por época (D-23). Com acesso ao cluster do IME —
 440 GB de RAM e duas RTX A6000 — nenhuma delas é necessária.
 
@@ -1829,7 +1829,7 @@ sido. Segue-se daí:
    reporta um resultado, não a trajetória até ele.
 2. A célula A da matriz de D-34 continua sendo o controle, e o seu papel fica mais
    simples: reproduzir D-32 no servidor. Ela nunca dependeu da ablação.
-3. As duas limitações que D-32 quantificou — 45% dos nós sem feature, 298 de 368
+3. As duas limitações que D-32 quantificou — 45% dos nós sem feature, 273 de 343
    colunas fora do grafo — continuam abertas. Elas são desenho, não defeito, e é a
    técnica completa do `hpc` que as endereça (D-34).
 
@@ -2073,8 +2073,11 @@ teste completo:
 salvo confere com o manifesto nas duas, então não é erro de gravação: as execuções
 divergiram de fato.
 
-A causa provável é paralelismo não determinístico no LightGBM, que a semente do
-projeto não controla. Não foi confirmado.
+A causa provável é paralelismo não determinístico no gradient boosting, que a semente
+do projeto não controla. Não foi confirmado. (D-43 achou a causa real, e ela era outra:
+a ordem das linhas. As baselines usam `HistGradientBoostingClassifier` do
+scikit-learn — as versões anteriores desta decisão diziam LightGBM, que o projeto nunca
+chegou a instalar.)
 
 Isto muda a leitura das seções acima: parte do que se atribuía a semente é
 irreprodutibilidade pura. `SEMENTES=n` na bateria continua necessário, mas mede a
@@ -2156,8 +2159,8 @@ lote = torch.randint(0, len(y_tr), (n_lote,), generator=gerador)
 ```
 
 Índices idênticos sobre ordens diferentes selecionam **linhas diferentes**. A semente
-estava fixa e mesmo assim o minilote mudava. O LightGBM das baselines tem o mesmo
-problema, porque treina na ordem em que as linhas chegam.
+estava fixa e mesmo assim o minilote mudava. O gradient boosting das baselines tem o
+mesmo problema, porque treina na ordem em que as linhas chegam.
 
 ### A correção
 
@@ -2270,3 +2273,107 @@ o salto que ela decomporia não existia.
 - **O treino pode não ter convergido.** Melhor época 28 de 49, com paciência de 20.
   A trilha 3 parou na 46 de 66. Aumentar a paciência é barato e diria se o platô é
   real.
+
+---
+
+## D-45 — O corte de outlier de coordenada estava inerte, e passa a ser por município
+
+**Data:** 2026-07-27 · **Status:** medido · **Corrige a implementação de D-17**
+· **Invalida a visão pareada de D-44**
+
+**Contexto.** D-17 introduziu um corte de coordenada implausível relativo à própria
+amostra: mediana como centro, desvio absoluto mediano (MAD) como escala, 40 desvios de
+tolerância. O múltiplo foi calibrado contra uma caixa desenhada à mão em torno do
+município de São Paulo, que retinha 98,8% dos pontos. D-21 depois moveu o recorte da
+capital para o estado, e o corte nunca foi recalibrado.
+
+**Evidência.** O MAD é medido sobre a amostra, então a caixa cresce com o recorte.
+Em 202601, sobre os pontos que já passaram pela caixa do Brasil:
+
+| Recorte | n | MAD lat | Caixa de 40 MAD | Descartados |
+|---|---|---|---|---|
+| capital `355030` | 32.842 | 0,0285° | ±1,1° (~122 km) | corte real |
+| estado `35` | 127.852 | 0,4384° | ±17,5° (~1.900 km) | **0** |
+| país | 542.431 | 3,1654° | ±126,6° | **0** |
+
+No recorte estadual, que é o default desde D-21, o corte não descartava **nenhum**
+ponto. Quem filtrava era só a caixa do Brasil. No recorte nacional do servidor seria
+ainda mais frouxo. Um filtro documentado como ativo, e inerte na prática desde D-21.
+
+**Decisão.** `_descartar_fora_da_amostra` passa a agrupar por `co_municipio_gestor`
+antes de medir mediana e MAD. É o que D-17 sempre quis dizer — "197 km do centro numa
+cidade de cerca de 35 km de largura" é uma afirmação sobre o município, não sobre a
+amostra — e faz o corte se comportar igual em qualquer recorte.
+
+`desvios=40` continua valendo sem recalibração, o que é a confirmação de que o
+agrupamento era a peça faltante: por município, o corte retém 98,71% no estado e
+97,08% no país, contra os 98,68% que a calibração original media na capital.
+
+**A calibração original**, preservada aqui porque saiu da docstring de
+`_descartar_fora_da_amostra`. Medida em 202201 sobre os 15.412 pontos da capital,
+contra uma caixa desenhada à mão que retinha 98,8%:
+
+| `desvios` | retém | raio máximo |
+|---|---|---|
+| 20 | 94,03% | 21,3 km |
+| **40** | **98,68%** | **39,2 km** |
+| 80 | 99,40% | 76,3 km |
+
+O MAD é pequeno porque os estabelecimentos se concentram no centro, e é por isso que o
+múltiplo precisa ser grande — 10 desvios descartariam 19% de pontos legítimos.
+
+**Consequência.** No estado, 1.652 pontos de 127.852 passam a ser descartados em
+202601. O conjunto de posicionáveis encolhe, e com ele a visão pareada: **os números
+pareados de D-44 foram medidos sobre 127.868 estabelecimentos e precisam ser
+remedidos.** A visão completa não muda — ela não depende de posicionabilidade.
+
+Isso também torna as células A e B da matriz de D-34 comparáveis entre si na visão
+pareada, o que antes não eram: com o corte medido sobre a amostra, a máscara de
+posicionáveis era uma regra estritamente mais frouxa no país do que no estado.
+
+**O que foi descartado.** Caixa fixa por município, que exigiria uma tabela de caixas e
+quebraria a cada troca de recorte. Aposentar o corte e confiar só na caixa do Brasil,
+que é o comportamento que já se tinha por acidente e deixa passar os 1.652 pontos que
+D-17 mostrou serem lixo.
+
+**Coberto por** `tests/test_graph_coordenadas.py`, que inclui o comportamento antigo
+como controle: o mesmo ponto deslocado passa quando o corte é medido sobre a amostra
+inteira.
+
+**Pendente:** reexecutar `make experimento` para regravar a visão pareada. Até lá, os
+números pareados de D-44 são os melhores que existem e estão sabidamente defasados;
+a visão completa continua válida.
+
+---
+
+## D-46 — O script do experimento não reproduzia D-44
+
+**Data:** 2026-07-27 · **Status:** corrigido
+
+**Contexto.** D-44 é o resultado em vigor do trabalho, e foi medido em
+`notebook/03_modelagem.ipynb`. O ponto de entrada documentado é `make experimento`, que
+roda `tools/roda_experimento.py`. As duas coisas divergiam em três eixos:
+
+| | notebook 03 (D-44) | `roda_experimento` |
+|---|---|---|
+| Baselines | `rodar_todas`, cinco | três |
+| Paciência | 20 | 15 |
+| Épocas | 200 | 150 |
+
+Faltavam `por_entidade` e `gbdt_ultimo_snapshot` — o primeiro é o segundo melhor modelo
+sem estrutura em AP. E com paciência 15 a trilha 2 pararia na época 43, antes da melhor
+época que D-44 registra (28 de 49, com paciência 20).
+
+**Por que importa além do relatório local.** `hpc/roda_tudo.py` lança este mesmo script
+nas células `src` da bateria, e a célula A da matriz de D-34 existe para reproduzir o
+resultado do notebook no servidor. Com os defaults divergentes, ela mediria outra coisa
+e a divergência seria atribuída ao hardware ou ao escopo.
+
+**Decisão.** Os defaults do script e do `Makefile` passam a ser os de D-44, e a trilha 1
+roda as cinco baselines — uma a uma, descartando cada previsão depois de medida, porque
+manter as cinco vivas não cabe em 9 GB (D-23). Custo: a execução vai de ~55 min a ~1h12,
+com pico de 6,95 GB dentro do teto de 7 GB.
+
+**O que fica aberto.** Nenhuma execução de D-44 está gravada em `docs/resultados/`; o
+número vive só nas saídas do notebook. A primeira execução do script corrigido é que vai
+materializá-lo — e já sairá com a visão pareada de D-45.

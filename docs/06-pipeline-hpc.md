@@ -5,6 +5,16 @@ e a comparação que a existência dele torna possível. O passo a passo operaci
 em [`../hpc/README.md`](../hpc/README.md); aqui ficam a motivação, o desenho e o que
 cada metade da comparação sustenta.
 
+Numa máquina nova do cluster, do zero ao resultado:
+
+```bash
+screen -S ic && make -f hpc/Makefile tudo-do-zero
+```
+
+Confere o ambiente, roda o ETL nacional e a bateria completa, nessa ordem, parando no
+primeiro estágio que falhar. Os três são retomáveis, então relançar o mesmo comando
+depois de uma queda — ou do corte de 168 h do cluster — continua de onde parou.
+
 ## 1. Por que dois pipelines
 
 Todo o projeto foi construído sob uma máquina de 9 GB de RAM, e várias decisões
@@ -14,7 +24,7 @@ trocaram informação por viabilidade. Quatro estão medidas:
 |---|---|---|
 | Recorte no estado de São Paulo | D-21 | o país tem 602.160 estabelecimentos contra 146.679 |
 | Grafo estático cortado em 201701 | D-25 | rede nove anos mais velha que o teste; **45% dos nós sem feature** |
-| Projeção mínima de duas colunas por tabela filha | D-23 | **298 das 368 colunas `util`** fora do grafo; aresta sem peso |
+| Projeção mínima de duas colunas por tabela filha | D-23 | **273 das 343 colunas `util`** fora do grafo; aresta sem peso |
 | Negativos 200:1, validação amostrada, um passo por época | D-23 | gradiente de um único minilote por época |
 
 Nenhuma delas é escolha metodológica: são consequências de hardware, e cada uma
@@ -69,16 +79,22 @@ amarrados:
 
 | | Escopo São Paulo | Escopo nacional |
 |---|---|---|
-| **Técnica limitada** | célula A — reproduz o resultado do notebook (D-32) | célula B |
+| **Técnica limitada** | célula A — reproduz o resultado do notebook (D-44) | célula B |
 | **Técnica completa** | célula C | célula D |
 
-- **A** é o controle: rodada no servidor, deve reproduzir D-32 dentro do ruído de
+- **A** é o controle: rodada no servidor, deve reproduzir D-44 dentro do ruído de
   semente. Se não reproduzir, a diferença está no código novo — e não no hardware nem
-  no escopo. É a única checagem que separa as três coisas.
+  no escopo. É a única checagem que separa as três coisas. O alvo é D-44 e não D-32:
+  D-43 mostrou que todo número de GNN anterior a ele saiu de ordem arbitrária de
+  linhas, D-32 incluído, e a inversão que D-32 registrou não se reproduz.
 - **B** isola o efeito do **escopo**, com a técnica constante.
 - **C** isola o efeito da **técnica**, com o escopo constante. É a extensão do grafo
-  temporal medida em São Paulo, comparável diretamente a D-32.
+  temporal medida em São Paulo, comparável diretamente a D-44.
 - **D** é o resultado de referência do trabalho.
+
+O alvo de A é medido por `tools/roda_experimento.py`, e ele tem de coincidir com
+`notebook/03_modelagem.ipynb` nos três eixos que D-44 fixou: as cinco baselines, 200
+épocas e paciência 20.
 
 O modo compatível replica de propósito as quatro limitações. Não é modo de
 compatibilidade de código: é **condição experimental**.
@@ -100,7 +116,7 @@ visibilidade por exemplo dentro da transição continua registrada como extensã
 
 ### 5.2 Aresta com peso, e mais de um vocabulário por tabela
 
-A projeção completa entrega 342 colunas das tabelas filhas contra 70 da mínima. Cada
+A projeção completa entrega 343 colunas das tabelas filhas contra 70 da mínima. Cada
 coluna `category` vira um vocabulário próprio — `rlEstabServClass` passa a contribuir
 serviço **e** classificação —, as colunas `Int64` viram peso de aresta agregado por par
 com soma e `log1p`, e `min_arestas` cai a zero.
@@ -124,6 +140,19 @@ Os grafos ficam em CPU e só o da transição em curso vai para a GPU, o que man
 pico de VRAM no tamanho de um grafo em vez da soma — e é o que permite não depender da
 VRAM, que a wiki do IME não documenta. Quando a estimativa autoriza, todos são
 cacheados.
+
+**A paciência conta validações, não épocas.** Com `--validar-cada k`, apenas uma época
+em cada `k` produz medição, e só ela pode avançar a contagem. A versão anterior somava
+em toda época: `--validar-cada 5 --paciencia 15` parava depois de três medições em vez
+de quinze, e o histórico recebia o melhor AP repetido nas épocas mudas — uma curva
+falsa dentro do artefato, sendo que a curva é resultado reportável (metodologia,
+seção 6.3). Hoje a época muda grava AP nulo.
+
+**A retomada é de verdade.** O checkpoint carrega pesos correntes, melhores pesos,
+estado do Adam, estado dos geradores e o histórico, e uma execução relançada continua
+da época seguinte. Antes ele só era escrito, nunca lido: relançar depois do corte de
+168 h recomeçava do zero. A semente entra no nome do arquivo, senão a execução da
+semente 43 retomaria a da 42. `--sem-retomar` força o recomeço.
 
 ## 6. Custo estimado, e o que ainda não foi medido
 

@@ -64,7 +64,7 @@ manuais estão no cabeçalho de `requirements.txt`.
 | Staging | **DuckDB** | lê CSV `ISO-8859-1` com `;`, tudo `VARCHAR` |
 | Armazenamento | **Parquet** + **PyArrow** | camada tipada, particionada por competência |
 | Grafo | **RelBench 2.1.1** + **PyTorch Geometric** | `Database` a partir do schema, `HeteroData` |
-| Modelos | **PyTorch**, **scikit-learn**, **LightGBM** | GNNs e baselines tabulares |
+| Modelos | **PyTorch**, **scikit-learn** | GNNs e baselines tabulares (`HistGradientBoosting`) |
 | Métricas | `scikit-learn`, `scipy` | AP, AUC por Mann-Whitney, MAP@k próprio |
 | Testes | **pytest** | schema, partição, métricas, ETL e `hpc/` sintético |
 | Orquestração | **Make** | ver `make` |

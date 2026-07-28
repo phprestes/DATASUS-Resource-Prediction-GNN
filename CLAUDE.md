@@ -124,9 +124,10 @@ Measured on São Paulo. Figures below marked *(9 snapshots)* were taken before 2
 - **Every GNN number measured before D-43 is irreproducible**, D-24, D-26 and D-32 included: the task table came out of DuckDB in nondeterministic row order and the training minibatch is drawn by index, so a fixed seed still drew different rows. Fixed by `ORDER BY` in `tasks.py`, covered by `tests/test_tasks_ordem.py`. D-32's "relational wins both metrics" was an artifact and does not reproduce; D-26's uncomfortable result is the real one.
 - **Epochs-to-early-stop is a reported result**, not an implementation detail — it varies between runs and explains the metric.
 - **The paired table is the one that counts.** Prevalence is 0.0553% on positionable establishments vs 0.0478% overall, and **all 6,309 test positives are positionable** — unpaired comparison flatters track 3 by construction.
-- **Two limitations are now quantified, not just mentioned** (D-32): node features come from the graph cutoff (201701), so **45% of nodes enter with an empty feature vector** — the state had 80,073 establishments in 2017 against 146,679 across the series; and the minimal projection (D-23) drops **298 of the 368 `util` columns** of the fact tables, so relational edges carry no weight and no attribute.
+- **Two limitations are now quantified, not just mentioned** (D-32): node features come from the graph cutoff (201701), so **45% of nodes enter with an empty feature vector** — the state had 80,073 establishments in 2017 against 146,679 across the series; and the minimal projection (D-23) drops **273 of the 343 `util` columns** of the child tables, so relational edges carry no weight and no attribute.
 - **Change rate is flat**: 0.079–0.110 per year on the target, median 0.092 over the nine transitions, no pandemic spike. Annual density is settled (D-10). If a table ever shows a rate near 1.0, suspect a key or a padding change before believing the data (D-27, D-30).
-- **Coordinates cover 87.3%** at state scope in 202601 (85.7% in 202501, 75.0% in the capital), 87.2% accumulated over the ten snapshots. Rising ~1.6 points a year. D-17 said 57% — measured on six of nine snapshots, superseded by D-22.
+- **Coordinates cover 87.3%** at state scope in 202601 (85.7% in 202501, 75.0% in the capital), 87.2% accumulated over the ten snapshots. Rising ~1.6 points a year. D-17 said 57% — measured on six of nine snapshots, superseded by D-22. **These figures predate D-45**: the outlier cut was measured over the whole sample, and had been discarding nothing at all since D-21 widened the recorte to the state. It now groups by município and drops 1.3% more, so coverage and the paired view both need re-measuring.
+- **The paired numbers of D-44 are stale** (D-45). The complete-test view is unaffected — it does not depend on positionability.
 - **The schema drifts.** Three of 44 tables have columns that vanish and return, with 201901 the anomalous competência. Reading several Parquet files directly via DuckDB needs `union_by_name=true` (D-20).
 
 ## Memory is a hard constraint
@@ -152,8 +153,8 @@ The index is not optional: the item embedding is position-indexed, so weights wi
 ## Reproducing the experiment
 
 `make experimento` (or `python -m tools.roda_experimento`) runs all three tracks and writes
-`docs/resultados/{date}-trilhas-{recorte}.json` incrementally. ~55 min at state
-scope, **6.3 GB peak** with the ten-snapshot series. On this 9 GB machine that
+`docs/resultados/{date}-trilhas-{recorte}-{variante}-s{semente}.json` incrementally. ~1h12 at state
+scope, **6.95 GB peak** with the ten-snapshot series. On this 9 GB machine that
 only fits if the browser and IDE are not holding 7 GB: run it under a cgroup
 — which is what the `make` target already does, wrapping the run in
 `systemd-run --user --scope -p MemoryMax=$(MEM)` so an overrun kills the experiment
@@ -163,6 +164,12 @@ start of GNN training.
 `particao.antes_de_todos_os_rotulos`, never `fim_do_treino` — the latter puts the
 label inside the graph (D-25), and `grafo_relacional_para_data` refuses the call
 without the parameter for that reason.
+
+**D-44 was measured in `notebook/03_modelagem.ipynb`, not by this script**, and the
+script has to match it or cell A of the HPC matrix — whose job is to reproduce the
+notebook — measures something else. The three axes that must agree: all **five**
+baselines (`rodar_todas`), 200 epochs, patience 20. The script ran three baselines
+with patience 15 until this was fixed. `docs/resultados/` still holds no run of D-44.
 
 ## Notebooks
 

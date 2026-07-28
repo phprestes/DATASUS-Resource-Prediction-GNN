@@ -11,8 +11,8 @@ fixa). Mesmos índices sobre ordens diferentes selecionam linhas diferentes, ent
 duas execuções com a mesma semente divergiam já na primeira época. Medido: melhor
 época 10 contra 99, MAP@10 0,189 contra 0,300. Ver D-42.
 
-O LightGBM das baselines tem o mesmo problema pelo mesmo motivo — treina na ordem
-em que as linhas chegam.
+O gradient boosting das baselines tem o mesmo problema pelo mesmo motivo — treina
+na ordem em que as linhas chegam.
 """
 
 from __future__ import annotations
