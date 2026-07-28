@@ -5,6 +5,9 @@
 __pycache__
 .pytest_cache
 
+# Configuração local de agente
+.claude/settings.local.json
+
 # Dados
 data/01_raw/*
 data/02_intermediate/*
