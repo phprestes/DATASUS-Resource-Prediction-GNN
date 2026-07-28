@@ -226,7 +226,10 @@ def montar_um_grafo(
             continue
 
         for coluna in vocabularios:
-            nome = f"{tabela}:{coluna}" if com_atributos else tabela
+            # Separador `_` e não `:`: o PyG avisa que tipo de nó com caractere
+            # fora de [A-Za-z0-9_] pode se comportar de forma inesperada, porque
+            # o nome vira chave de `ModuleDict` em `to_hetero`.
+            nome = f"{tabela}_{coluna}" if com_atributos else tabela
             projecao = [COL_ENTIDADE, coluna, *pesos]
             pares = fatia.select(projecao).to_pandas().dropna(subset=[COL_ENTIDADE, coluna])
             pares = pares[pares[COL_ENTIDADE].isin(idx_unidade)]

@@ -250,18 +250,15 @@ def treinar(
     validar_cada: int = 1,
     amp: bool = True,
     checkpoint_em: Path | None = None,
+    retomar: bool = True,
     verboso: bool = True,
 ) -> tuple[ModeloAquisicao, dict]:
     """
     Treina selecionando época pela validação, com um grafo por transição.
 
-    `passos_por_epoca` é por transição de treino: com seis transições e vinte
-    passos, são 120 passos de gradiente por época contra **um** no pipeline do
-    notebook. `validar_cada` permite espaçar a validação completa quando ela
-    dominar o tempo — o default é toda época, que na A6000 custa poucos segundos.
-
-    `checkpoint_em` grava estado a cada época. Sem escalonador para reenfileirar,
-    é o que permite retomar uma execução morta pelo corte de 168 h.
+    `passos_por_epoca` é por transição de treino. `paciencia` conta **validações**
+    sem melhora, não épocas. `checkpoint_em` grava estado a cada época e
+    `retomar` continua de onde parou. Ver docs/06-pipeline-hpc.md, seção 5.3.
 
     Args:
         tarefa: tabela de rótulos.
@@ -270,18 +267,22 @@ def treinar(
         indice: índice de nós e itens, na ordem do grafo.
         dispositivo: `"cuda"` ou `"cpu"`.
         epocas: teto de épocas.
-        paciencia: épocas sem melhora antes de parar.
+        paciencia: **validações** sem melhora antes de parar.
         passos_por_epoca: passos de gradiente **por transição de treino**.
         lote: pares por passo.
         validar_cada: valida a cada `k` épocas.
         amp: usa bf16 com autocast quando a GPU suporta.
-        checkpoint_em: onde gravar estado por época. `None` desliga.
+        checkpoint_em: onde gravar estado por época. `None` desliga, e sem ele
+            não há retomada.
+        retomar: carrega `checkpoint_em` se ele existir. `False` recomeça do
+            zero e sobrescreve.
         verboso: imprime progresso.
 
     Returns:
         Par `(modelo, curva)`. O modelo carrega os pesos da melhor época de
         validação. `curva` traz melhor época, AP de validação, passos por época,
-        se os grafos couberam na GPU e se AMP foi usado.
+        se os grafos couberam na GPU, se AMP foi usado e de que época o treino
+        foi retomado.
     """
     torch.manual_seed(SEMENTE)
     gerador = torch.Generator().manual_seed(SEMENTE)
@@ -326,8 +327,54 @@ def treinar(
 
     historico: list[dict] = []
     melhor_ap, melhor_epoca, melhores_pesos, sem_melhora = -1.0, -1, None, 0
+    primeira_epoca = 0
 
-    for epoca in range(epocas):
+    if retomar and checkpoint_em is not None and checkpoint_em.exists():
+        estado = torch.load(checkpoint_em, map_location=dispositivo, weights_only=False)
+        modelo.load_state_dict(estado["state_dict"])
+        otimizador.load_state_dict(estado["otimizador"])
+        gerador.set_state(estado["gerador"])
+        torch.set_rng_state(estado["rng_cpu"])
+        if estado.get("rng_cuda") is not None and dispositivo == "cuda":
+            torch.cuda.set_rng_state_all(estado["rng_cuda"])
+        melhores_pesos = estado["melhores_pesos"]
+        melhor_ap = estado["melhor_ap_validacao"]
+        melhor_epoca = estado["melhor_epoca"]
+        sem_melhora = estado["sem_melhora"]
+        historico = estado["historico"]
+        primeira_epoca = estado["epoca"] + 1
+        if verboso:
+            print(
+                f"  retomando de {checkpoint_em} na época {primeira_epoca} "
+                f"(melhor {melhor_epoca}, AP {melhor_ap:.5f})",
+                flush=True,
+            )
+
+    def gravar_checkpoint(epoca: int) -> None:
+        """Estado suficiente para continuar da época seguinte."""
+        if checkpoint_em is None:
+            return
+        checkpoint_em.parent.mkdir(parents=True, exist_ok=True)
+        temporario = checkpoint_em.with_suffix(".pt.tmp")
+        torch.save(
+            {
+                "epoca": epoca,
+                "melhor_epoca": melhor_epoca,
+                "melhor_ap_validacao": melhor_ap,
+                "sem_melhora": sem_melhora,
+                "state_dict": {c: t.detach().cpu() for c, t in modelo.state_dict().items()},
+                "melhores_pesos": melhores_pesos,
+                "otimizador": otimizador.state_dict(),
+                "gerador": gerador.get_state(),
+                "rng_cpu": torch.get_rng_state(),
+                "rng_cuda": torch.cuda.get_rng_state_all() if dispositivo == "cuda" else None,
+                "historico": historico,
+            },
+            temporario,
+        )
+        temporario.replace(checkpoint_em)
+
+    for epoca in range(primeira_epoca, epocas):
         modelo.train()
         perdas = []
         for transicao, u, k, y, _ in treino:
@@ -359,8 +406,9 @@ def treinar(
             if not na_gpu:
                 del grafo
 
-        ap = melhor_ap
-        if epoca % validar_cada == 0:
+        validou = epoca % validar_cada == 0
+        ap = None
+        if validou:
             modelo.eval()
             escores, rotulos = [], []
             for transicao, u, k, y, _ in validacao:
@@ -375,35 +423,35 @@ def treinar(
                     del grafo
             ap = average_precision(np.concatenate(rotulos), np.concatenate(escores))
 
+        # Época muda entra com AP nulo, não com o melhor AP repetido: a curva vai
+        # para o artefato e é resultado reportável (metodologia, seção 6.3).
         historico.append(
             {"epoca": epoca, "perda": float(np.mean(perdas)), "ap_validacao": ap}
         )
         if verboso and epoca % 10 == 0:
+            medida = f"{ap:.5f}" if validou else "—"
             print(
                 f"  época {epoca:4d}  perda {np.mean(perdas):.4f}  "
-                f"AP validação {ap:.5f}",
+                f"AP validação {medida}",
                 flush=True,
             )
 
-        if ap > melhor_ap:
-            melhor_ap, melhor_epoca, sem_melhora = ap, epoca, 0
-            melhores_pesos = {
-                c: t.detach().cpu().clone() for c, t in modelo.state_dict().items()
-            }
-            if checkpoint_em is not None:
-                checkpoint_em.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(
-                    {
-                        "epoca": epoca,
-                        "melhor_ap_validacao": melhor_ap,
-                        "state_dict": melhores_pesos,
-                    },
-                    checkpoint_em,
-                )
-        else:
-            sem_melhora += 1
-            if sem_melhora >= paciencia:
-                break
+        parar = False
+        if validou:
+            # Paciência só avança em época que mediu; senão `validar_cada` a
+            # consumiria sem informação nenhuma.
+            if ap > melhor_ap:
+                melhor_ap, melhor_epoca, sem_melhora = ap, epoca, 0
+                melhores_pesos = {
+                    c: t.detach().cpu().clone() for c, t in modelo.state_dict().items()
+                }
+            else:
+                sem_melhora += 1
+                parar = sem_melhora >= paciencia
+
+        gravar_checkpoint(epoca)
+        if parar:
+            break
 
     if melhores_pesos is None:
         raise ErroGNN("treino não completou nenhuma época com AP de validação finito")
@@ -413,6 +461,8 @@ def treinar(
         "melhor_epoca": melhor_epoca,
         "melhor_ap_validacao": melhor_ap,
         "epocas_rodadas": len(historico),
+        "retomado_da_epoca": primeira_epoca or None,
+        "validar_cada": validar_cada,
         "historico": pd.DataFrame(historico),
         "dispositivo": dispositivo,
         "amp": tipo_amp.__str__() if usar_amp else "desligado",

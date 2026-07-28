@@ -65,8 +65,11 @@ def main() -> int:
     ap.add_argument("--paciencia", type=int, default=15)
     ap.add_argument("--passos", type=int, default=20, help="passos por transição, por época")
     ap.add_argument("--lote", type=int, default=2_000_000)
-    ap.add_argument("--validar-cada", type=int, default=1)
+    ap.add_argument("--validar-cada", type=int, default=1,
+                    help="valida a cada k épocas; a paciência conta validações")
     ap.add_argument("--sem-amp", action="store_true")
+    ap.add_argument("--sem-retomar", action="store_true",
+                    help="ignora o checkpoint e recomeça o treino do zero")
     ap.add_argument("--permitir-cpu", action="store_true")
     ap.add_argument("--permitir-maquina-pequena", action="store_true",
                     help="ignora a guarda de RAM; só para dado sintético, nunca "
@@ -287,6 +290,10 @@ def main() -> int:
         "negativos_por_positivo": 200 if args.modo == "compativel" else None,
     }
 
+    # A semente entra no nome do checkpoint: sem ela, a execução da semente 43
+    # retomaria o treino da 42 e as duas mediriam a mesma coisa.
+    checkpoint = artefatos.MODELS_DIR / f"parcial-{conjunto}-s{args.semente}.pt"
+
     t0 = time.time()
     modelo, curva = treino_hpc.treinar(
         tarefa,
@@ -300,12 +307,17 @@ def main() -> int:
         lote=args.lote,
         validar_cada=args.validar_cada,
         amp=not args.sem_amp,
-        checkpoint_em=artefatos.MODELS_DIR / f"parcial-{conjunto}.pt",
+        checkpoint_em=checkpoint,
+        retomar=not args.sem_retomar,
     )
+    checkpoint.unlink(missing_ok=True)
     resultados.setdefault("treino", {})["gnn_temporal"] = {
         "segundos": round(time.time() - t0),
         "melhor_epoca": curva["melhor_epoca"],
         "ap_validacao": curva["melhor_ap_validacao"],
+        "epocas_rodadas": curva["epocas_rodadas"],
+        "retomado_da_epoca": curva["retomado_da_epoca"],
+        "validar_cada": curva["validar_cada"],
         "passos_por_epoca": curva["passos_por_epoca"],
         "grafos_na_gpu": curva["grafos_na_gpu"],
         "amp": curva["amp"],

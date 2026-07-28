@@ -228,6 +228,63 @@ def test_treino_usa_o_peso_da_aresta(particao):
     assert treino._pesos_do_grafo(sem_peso.por_origem["201701"]) is None
 
 
+def test_paciencia_conta_validacoes_e_nao_epocas(particao):
+    """
+    Com `validar_cada=3` e paciência 2, o treino tem de sobreviver às épocas mudas.
+
+    A versão anterior somava paciência em toda época, então as duas primeiras
+    épocas sem medição já esgotavam a conta e o laço parava depois de uma única
+    validação.
+    """
+    grafos = grafos_falsos()
+    tarefa = tarefa_falsa(particao)
+    indice = IndicePares.de(grafos.unidades, [f"{k:02d}" for k in range(N_ITENS)])
+
+    _, curva = treino.treinar(
+        tarefa, particao, grafos, indice,
+        dispositivo="cpu", dim_saida=8, epocas=7, paciencia=2,
+        passos_por_epoca=1, lote=64, validar_cada=3, amp=False, verboso=False,
+    )
+
+    historico = curva["historico"]
+    assert len(historico) == 7
+    assert historico["ap_validacao"].notna().sum() == 3
+    # Época muda não carrega o melhor AP repetido: a curva vai para o artefato.
+    assert historico.loc[historico["epoca"] % 3 != 0, "ap_validacao"].isna().all()
+    assert curva["melhor_epoca"] % 3 == 0
+
+
+def test_treino_retoma_do_checkpoint(particao, tmp_path):
+    """
+    Uma execução morta pelo corte de 168 h continua de onde parou.
+
+    Sem retomada o checkpoint só documentaria o que se perdeu.
+    """
+    grafos = grafos_falsos()
+    tarefa = tarefa_falsa(particao)
+    indice = IndicePares.de(grafos.unidades, [f"{k:02d}" for k in range(N_ITENS)])
+    checkpoint = tmp_path / "parcial.pt"
+
+    comum = dict(
+        dispositivo="cpu", dim_saida=8, paciencia=99, passos_por_epoca=1,
+        lote=64, amp=False, verboso=False, checkpoint_em=checkpoint,
+    )
+    _, parcial = treino.treinar(tarefa, particao, grafos, indice, epocas=3, **comum)
+    assert parcial["retomado_da_epoca"] is None
+    assert len(parcial["historico"]) == 3
+
+    _, retomado = treino.treinar(tarefa, particao, grafos, indice, epocas=6, **comum)
+
+    assert retomado["retomado_da_epoca"] == 3
+    assert len(retomado["historico"]) == 6
+    assert retomado["melhor_ap_validacao"] >= parcial["melhor_ap_validacao"]
+
+    _, do_zero = treino.treinar(
+        tarefa, particao, grafos, indice, epocas=6, retomar=False, **comum
+    )
+    assert do_zero["retomado_da_epoca"] is None
+
+
 def test_fatia_por_transicao_respeita_o_conjunto(particao):
     grafos = grafos_falsos()
     tarefa = tarefa_falsa(particao)
