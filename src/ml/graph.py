@@ -302,9 +302,9 @@ def montar_db(
     Args:
         recorte: prefixo de código IBGE; `None` é o país inteiro.
         pasta: raiz da camada primária.
-        tabelas: subconjunto de `FACT_TABLES` a incluir. `None` inclui todas.
         tolerar_falhas: segue adiante quando uma tabela filha não pode ser lida.
-        colunas: projeção por tabela, sobrescrevendo `CNES_USEFUL_COLUMNS`.
+        colunas: projeção por tabela, sobrescrevendo `CNES_USEFUL_COLUMNS`. As
+            chaves também restringem quais tabelas entram no `Database`.
 
     Returns:
         `Database` do RelBench. As tabelas guardam `pyarrow.Table`, não
@@ -474,52 +474,59 @@ class GrafoGeografico:
         return self.arestas.num_rows
 
 
-def _descartar_fora_da_amostra(df: pd.DataFrame, desvios: float) -> pd.DataFrame:
+MINIMO_PARA_CAIXA_ROBUSTA = 10
+
+
+def _caixa_robusta(df: pd.DataFrame, desvios: float) -> pd.Series:
     """
-    Descarta coordenada distante do corpo da amostra.
-
-    A caixa do Brasil não basta. Medido em São Paulo, 1,2% das coordenadas
-    existentes caem fora do município, chegando a 197 km do centro numa cidade de
-    cerca de 35 km de largura — passam pela caixa nacional e mesmo assim são
-    lixo. Ver D-17.
-
-    O corte é relativo à própria amostra, não a uma caixa fixa: usa a mediana
-    como centro e o desvio absoluto mediano (MAD) como escala, ambos robustos aos
-    outliers que se quer remover. Uma caixa fixa por município exigiria uma
-    tabela de caixas e quebraria ao trocar o recorte espacial.
+    Máscara da caixa mediana ± `desvios` MAD, em latitude e longitude.
 
     Args:
-        coords: coordenadas por estabelecimento, uma linha por unidade.
+        df: coordenadas de um grupo, uma linha por estabelecimento.
         desvios: quantos MAD de tolerância em torno da mediana.
 
     Returns:
-        Subconjunto de `coords` dentro da caixa robusta.
-
-    O default de `desvios` foi calibrado contra o comportamento de uma caixa
-    desenhada à mão em torno do município de São Paulo, que retinha 98,8% das
-    coordenadas. Em 202201, sobre 15.412 pontos:
-
-        desvios=20  retém 94,03%  raio máximo 21,3 km
-        desvios=40  retém 98,68%  raio máximo 39,2 km   <- default
-        desvios=80  retém 99,40%  raio máximo 76,3 km
-
-    O MAD é pequeno porque os estabelecimentos se concentram no centro, e é por
-    isso que o múltiplo precisa ser grande — 10 desvios descartaria 19% de
-    pontos legítimos.
+        Máscara booleana. Grupo pequeno demais, ou com MAD zero, não tem escala
+        para comparar e passa inteiro.
     """
-    if len(df) < 10:
-        return df
+    if len(df) < MINIMO_PARA_CAIXA_ROBUSTA:
+        return pd.Series(True, index=df.index)
 
     centro = df[[COL_LATITUDE, COL_LONGITUDE]].median()
     desvio_absoluto = (df[[COL_LATITUDE, COL_LONGITUDE]] - centro).abs()
     mad = desvio_absoluto.median()
-    # MAD zero acontece quando quase tudo está no mesmo ponto; aí não há escala
-    # para comparar e o corte é abandonado em vez de descartar tudo.
     if (mad <= 0).any():
-        return df
+        return pd.Series(True, index=df.index)
 
-    dentro = (desvio_absoluto <= desvios * mad).all(axis=1)
-    return df[dentro]
+    return (desvio_absoluto <= desvios * mad).all(axis=1)
+
+
+def _descartar_fora_da_amostra(
+    df: pd.DataFrame, desvios: float, por_municipio: bool = True
+) -> pd.DataFrame:
+    """
+    Descarta coordenada distante do corpo da amostra do próprio município.
+
+    O agrupamento não é detalhe: a escala do MAD cresce com o recorte, e medido
+    sobre a amostra inteira o corte não descarta nada além do estado. Ver D-17 e
+    a nota de calibração em docs/03-decisoes.md.
+
+    Args:
+        df: coordenadas por estabelecimento, com a coluna de município.
+        desvios: quantos MAD de tolerância em torno da mediana.
+        por_municipio: agrupa antes de medir. `False` mede sobre a amostra
+            inteira, que é o comportamento anterior a esta correção.
+
+    Returns:
+        Subconjunto de `df` dentro da caixa robusta do seu grupo.
+    """
+    if not por_municipio or COL_MUNICIPIO not in df.columns:
+        return df[_caixa_robusta(df, desvios)]
+
+    dentro = df.groupby(COL_MUNICIPIO, group_keys=False, observed=True)[
+        df.columns.tolist()
+    ].apply(lambda g: g[_caixa_robusta(g, desvios)])
+    return dentro.reset_index(drop=True)
 
 
 def coordenadas_por_unidade(
@@ -549,21 +556,13 @@ def coordenadas_por_unidade(
             série inteira.
         politica: `'mais_antiga'` ou `'mais_recente'`.
 
+        desvios: tolerância do corte de outlier, em múltiplos do desvio absoluto
+            mediano do município. Ver `_descartar_fora_da_amostra` e D-17.
+
     Returns:
         DataFrame com `co_unidade`, latitude e longitude, uma linha por unidade,
-        já filtrado pela caixa de plausibilidade. No estado sobram 87,2% das
-        unidades (D-22).
-
-    `periodo_referencia` corta a série antes de escolher, o que permite montar o
-    grafo sem enxergar nada além de uma data — útil para verificar quanto o
-    resultado depende da suposição de invariância.
-
-    `desvios` controla o corte de outlier relativo à amostra, em múltiplos do
-    desvio absoluto mediano. Ver `_descartar_fora_da_amostra` e D-17.
-
-    Linhas sem coordenada utilizável são descartadas. Contar o descarte é
-    responsabilidade do chamador, e reportá-lo ao lado da métrica é obrigação
-    de D-15.
+        já filtrado pela caixa de plausibilidade. Contar o descarte é do
+        chamador, e reportá-lo ao lado da métrica é obrigação de D-15.
     """
     if politica not in ("mais_antiga", "mais_recente"):
         raise ValueError(
@@ -577,6 +576,8 @@ def coordenadas_por_unidade(
             f"{TABELA_RAIZ} não tem as colunas {faltando}; a trilha geográfica "
             "depende delas. Confira docs/01-selecao-tabelas.md."
         )
+    if COL_MUNICIPIO in raiz.column_names:
+        colunas.append(COL_MUNICIPIO)
 
     df = raiz.select(colunas).to_pandas()
     if periodo_referencia:
@@ -591,7 +592,8 @@ def coordenadas_por_unidade(
 
     agrupado = df.sort_values(COL_TEMPO).groupby(COL_ENTIDADE, as_index=False)
     escolhido = agrupado.first() if politica == "mais_antiga" else agrupado.last()
-    return escolhido.drop(columns=[COL_TEMPO]).reset_index(drop=True)
+    descartar = [c for c in (COL_TEMPO, COL_MUNICIPIO) if c in escolhido.columns]
+    return escolhido.drop(columns=descartar).reset_index(drop=True)
 
 
 def montar_grafo_geografico(
