@@ -1,12 +1,15 @@
 """
 Roda as três trilhas e escreve os resultados em docs/resultados/.
 
-Existe como script, e não apenas como notebook, por duas razões práticas: o
-treino leva vinte minutos e é mais confortável em background, e uma execução
-interrompida não pode perder o que já mediu.
+Existe como script, e não apenas como notebook, por duas razões práticas: a
+execução leva mais de uma hora e é mais confortável em background, e uma
+execução interrompida não pode perder o que já mediu.
 
 O resultado é gravado incrementalmente a cada modelo. Uma queda no meio da
 trilha 3 preserva a trilha 1 e a 2.
+
+**Tem de reproduzir D-44**, medido em `notebook/03_modelagem.ipynb`: as mesmas
+cinco baselines, 200 épocas, paciência 20.
 
 Uso:
     python -m tools.roda_experimento
@@ -56,6 +59,26 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}  pico {rss_gb():.2f} GB] {msg}", flush=True)
 
 
+def teto_duckdb() -> str:
+    """
+    Teto de memória do DuckDB, derivado da RAM da máquina.
+
+    Este script roda nas duas máquinas: na de 9 GB dá os mesmos 2 GB de sempre,
+    e no cluster deixa de estrangular a construção da tabela nacional.
+
+    Returns:
+        Teto no formato que o DuckDB aceita, com piso de 2 GB.
+    """
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for linha in f:
+                if linha.startswith("MemTotal:"):
+                    return f"{max(2, int(linha.split()[1]) // 1024**2 // 5)}GB"
+    except OSError:
+        pass
+    return "2GB"
+
+
 def main() -> int:
     """
     Entrada de linha de comando das três trilhas.
@@ -65,8 +88,9 @@ def main() -> int:
     """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--recorte", default=graph.RECORTE_PADRAO)
-    ap.add_argument("--epocas", type=int, default=150)
-    ap.add_argument("--paciencia", type=int, default=15)
+    # Defaults de D-44; paciência menor pararia antes da melhor época (28 de 49).
+    ap.add_argument("--epocas", type=int, default=200)
+    ap.add_argument("--paciencia", type=int, default=20)
     ap.add_argument("--k-vizinhos", type=int, default=10)
     ap.add_argument("--pular-gnn", action="store_true")
     ap.add_argument("--semente", type=int, default=gnn.SEMENTE,
@@ -82,13 +106,16 @@ def main() -> int:
     ap.add_argument("--saida", type=Path, default=None)
     args = ap.parse_args()
 
+    # `--recorte ""` é como a bateria pede o país; sem normalizar aqui, o filtro
+    # recusa a string vazia e as duas células nacionais morrem na largada.
+    recorte = args.recorte or None
     pasta_primaria = args.pasta_primaria or PRIMARY_FOLDER
 
     PASTA_RESULTADOS.mkdir(parents=True, exist_ok=True)
     variante = "sem-pandemia" if args.excluir_pandemia else "com-pandemia"
     saida = args.saida or (
         PASTA_RESULTADOS
-        / f"{date.today()}-trilhas-{args.recorte or 'pais'}-{variante}-s{args.semente}.json"
+        / f"{date.today()}-trilhas-{recorte or 'pais'}-{variante}-s{args.semente}.json"
     )
 
     periodos = changes.periodos_disponiveis(pasta_primaria)
@@ -101,7 +128,7 @@ def main() -> int:
     resultados: dict = {
         "experimento": "aquisicao de equipamento — tres trilhas",
         "data": str(date.today()),
-        "recorte": args.recorte,
+        "recorte": recorte,
         "excluir_pandemia": args.excluir_pandemia,
         "semente": args.semente,
         "snapshots": periodos,
@@ -126,13 +153,14 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    log(f"recorte {args.recorte!r} | snapshots {len(periodos)} | "
+    log(f"recorte {recorte or 'país'} | snapshots {len(periodos)} | "
         f"{variante} | semente {args.semente}")
     log(f"fim do treino {particao.fim_do_treino} | corte do grafo {corte_grafo}")
 
     # ---------------------------------------------------------------- tarefa
     tarefa = tasks.tarefa_aquisicao(
-        particao, recorte=args.recorte, pasta=pasta_primaria
+        particao, recorte=recorte, pasta=pasta_primaria,
+        limite_duckdb=teto_duckdb(),
     )
     resultados["tarefa"] = {
         "linhas": len(tarefa.df),
@@ -147,7 +175,7 @@ def main() -> int:
     # com todas as colunas e chega a 5,3 GB numa máquina de 9 GB (D-23).
     t0 = time.time()
     db = graph.montar_db(
-        recorte=args.recorte,
+        recorte=recorte,
         pasta=pasta_primaria,
         colunas=graph.colunas_minimas_para_grafo(),
     )
@@ -224,7 +252,7 @@ def main() -> int:
             nome,
             previsao,
             {"teste_completo": completo, "teste_pareado": pareado},
-            escopo=args.recorte,
+            escopo=recorte,
             modo="compativel",
             variante=variante,
             semente=args.semente,
@@ -259,11 +287,18 @@ def main() -> int:
         salvar()
 
     # -------------------------------------------------------------- trilha 1
+    # As cinco de `rodar_todas`, mas uma a uma: cada previsão é descartada assim
+    # que é medida, e manter as cinco vivas não cabe em 9 GB (D-23).
     for nome, fn in [
         ("persistencia", lambda: baselines.persistencia(tarefa, "teste")),
         ("popularidade_item",
          lambda: baselines.popularidade_item(tarefa, particao, "teste")),
         ("gbdt_geral", lambda: baselines.gbdt(tarefa, particao, conjunto="teste")),
+        ("gbdt_ultimo_snapshot",
+         lambda: baselines.gbdt(tarefa, particao, conjunto="teste",
+                                apenas_ultimo_snapshot=True)),
+        ("por_entidade",
+         lambda: baselines.por_entidade(tarefa, particao, conjunto="teste")),
     ]:
         previsao = fn()
         avaliar(previsao, nome)

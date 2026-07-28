@@ -58,8 +58,10 @@ TABELAS  ?=              # tabelas de `reprocessar-tabelas`; sem default
 PERIODO  ?=              # competência de `reprocessar-tabelas`
 
 # --- Modelagem --------------------------------------------------------------
-EPOCAS   ?= 150
-SEMENTE  ?= 42
+# Época e paciência são os de D-44; menores não reproduzem o resultado.
+EPOCAS    ?= 200
+PACIENCIA ?= 20
+SEMENTE   ?= 42
 RUN      ?=              # pacote a validar; vazio = o mais recente de models/
 
 # `compativel` replica as quatro limitações da máquina de 9 GB em qualquer
@@ -181,14 +183,16 @@ verificar:  ## Testes + resumo do schema derivado de docs/01-selecao-tabelas.md
 
 # ============================================================ experimento
 
-experimento:  ## As três trilhas, sob cgroup (~55 min no estado, pico 6,3 GB)
+experimento:  ## As três trilhas, sob cgroup (~1h12 no estado, pico 6,95 GB)
 	@echo "Recorte $(RECORTE), teto $(MEM), semente $(SEMENTE). Resultado gravado"
 	@echo "incrementalmente em docs/resultados/. Se o teto estourar, morre o"
 	@echo "experimento e não o ambiente."
+	@echo "O pico de D-44 foi 6,95 GB dentro do teto de 7 GB: feche o navegador."
 	$(LIMITADOR) $(PY) -m tools.roda_experimento \
-		--recorte $(RECORTE) --epocas $(EPOCAS) --semente $(SEMENTE) $(FLAG_PANDEMIA)
+		--recorte $(RECORTE) --epocas $(EPOCAS) --paciencia $(PACIENCIA) \
+		--semente $(SEMENTE) $(FLAG_PANDEMIA)
 
-experimento-baselines:  ## Só a trilha 1, sem GNN (~15 min)
+experimento-baselines:  ## Só a trilha 1, as cinco baselines, sem GNN (~25 min)
 	$(LIMITADOR) $(PY) -m tools.roda_experimento \
 		--recorte $(RECORTE) --semente $(SEMENTE) $(FLAG_PANDEMIA) --pular-gnn
 
@@ -266,6 +270,9 @@ hpc-plano:  ## [servidor] Imprime o que a bateria completa vai rodar, sem rodar
 
 hpc-tudo:  ## [servidor] BATERIA COMPLETA: 2 pipelines x 3 escopos x 2 variantes
 	$(MAKE) -f hpc/Makefile tudo
+
+hpc-tudo-do-zero:  ## [servidor] UM COMANDO: ambiente + ETL nacional + bateria
+	$(MAKE) -f hpc/Makefile tudo-do-zero
 
 # ============================================================ resto
 
